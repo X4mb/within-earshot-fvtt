@@ -16,10 +16,4 @@ https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json
 https://github.com/X4mb/within-earshot-fvtt
 ```
 
-**GitHub releases:** The installable zip has **`module.json` at the root** of the archive (plus `dist/`, `lang/`, `LICENSE`). Do not use GitHub’s green **Code → Download ZIP** for Foundry — that wraps the repo in an extra folder. Each [release](https://github.com/X4mb/within-earshot-fvtt/releases) publishes **`module.zip`** (and a copy as `withinearshot.zip`); `module.json`’s **`download`** field points at `…/releases/latest/download/module.zip`.
-
-**Manual install (no GitHub zip):** Copy the module folder into `Data/modules/withinearshot/` so you have `module.json`, `dist/`, `lang/`, etc. (same layout as inside the zip).
-
-**Console:** Warnings like `unreachable code after return` in **`vendor.mjs`** come from Foundry’s own bundles, not this module — safe to ignore.
-
 **License:** PolyForm Noncommercial 1.0.0 — non-commercial use; modification and private/non-commercial sharing allowed. See `LICENSE`.

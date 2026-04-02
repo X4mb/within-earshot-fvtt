@@ -1,5 +1,4 @@
-# Tag v* → build module.zip (Foundry layout) and upload module.zip + withinearshot.zip (alias).
-# Manifest "download" uses …/releases/.../download/module.zip per common Foundry / GitHub practice.
+# Tag v* → build module.zip and attach to the GitHub Release (matches manifest "download").
 name: Release package zip
 on:
   push:
@@ -22,11 +21,8 @@ jobs:
 
       - run: npm ci
       - run: npm run release-pack
-      - run: cp module.zip withinearshot.zip
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            module.zip
-            withinearshot.zip
+          files: module.zip
           generate_release_notes: true

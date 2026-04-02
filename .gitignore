@@ -4,6 +4,5 @@ node_modules/
 .env
 .env.*
 
-# Packaged module zip (upload to GitHub Releases, do not commit)
-withinearshot.zip
+# Packaged module zip (do not commit)
 module.zip

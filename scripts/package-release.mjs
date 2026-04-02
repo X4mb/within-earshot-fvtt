@@ -1,8 +1,4 @@
-/**
- * Builds module.zip for Foundry: archive root must contain module.json, then dist/, lang/, etc.
- * (Not the GitHub “Download ZIP” tree, which nests everything under a folder.)
- * Upload module.zip as a GitHub Release asset; manifest "download" uses …/download/module.zip
- */
+/** Build module.zip: root contains module.json, dist/, lang/, LICENSE (for GitHub Release + manifest download). */
 import { createWriteStream, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
