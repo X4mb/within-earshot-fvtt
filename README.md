@@ -30,7 +30,7 @@ You still use Foundry’s normal **Audio / Video** connection; this module only 
 - **GM voice: full volume everywhere** — Optional world toggle so the GM is always heard at full level for all players (off by default; GM can also use a **keybinding** to flip global vs proximity).
 - **Voice token shortcut** — Default **Ctrl+Shift+V** while a token is selected: **pin** your “speaking position” to that token, or **clear** the pin to fall back to your assigned character token. Rebind under **Configure Controls → Within Earshot**.
 - **Mute when speaker unknown** — Optional world rule: if a player’s speaking position can’t be resolved on the map, other players won’t hear them (GM still does). Off by default to avoid “GM hears me, players don’t” surprises.
-- **Visual hint** — A ring can show where your voice is sourced from on the map (updates as tokens move).
+- **Visual hint** — Tokens used as the **proximity voice source** show a small **cyan ball** on the **top-left** of the token so you can see where that speaker’s voice is anchored on the map (it follows the token when it moves).
 
 ---
 
