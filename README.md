@@ -16,10 +16,14 @@ https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json
 https://github.com/X4mb/within-earshot-fvtt
 ```
 
-For updates, use the same manifest URL or install from a [release](https://github.com/X4mb/within-earshot-fvtt/releases) (`module.zip`).
+For updates, use the same manifest URL or install from a [release](https://github.com/X4mb/within-earshot-fvtt/releases) (`withinearshot.zip`).
 
-**Install errors (`ENOENT` … `withinearshot.zip`):** Foundry downloads the package from the manifest’s **`download`** URL (`…/releases/…/download/module.zip`). That file must exist on GitHub. If you see this error, the release is missing **`module.zip`** (wrong filename, or no release). Fix: create or edit a [Release](https://github.com/X4mb/within-earshot-fvtt/releases) for the current tag and attach **`module.zip`** from `npm run release-pack`, **or** push a new `v*` tag after enabling Actions — the workflow in `.github/workflows/release.yml` builds and uploads **`module.zip`** automatically.
+**Install errors (`ENOENT` … `withinearshot.zip`):** Per [Foundry’s package flow](https://foundryvtt.com/article/package-management/), the app fetches your manifest, then downloads the **`download`** URL and unpacks it into `Data/modules/<module id>/`. The server first stages a zip named like **`withinearshot.zip`**. If the **`download`** URL returns **404** (no [GitHub Release](https://github.com/X4mb/within-earshot-fvtt/releases) yet, or the asset name does not match), nothing is saved and you get **ENOENT**. **Fix:** publish a Release whose assets include **`withinearshot.zip`** (run `npm run release-pack` locally, or push a `v*` tag so Actions uploads it). **Verify** before sharing: open `https://github.com/X4mb/within-earshot-fvtt/releases/latest/download/withinearshot.zip` in a browser — it must download a zip, not 404.
 
-**Develop:** `npm install` → `npm run build`. Release package: `npm run release-pack` (attach `module.zip` to a GitHub Release, or rely on the release workflow when you push a `v*` tag).
+**Manual install (no GitHub zip):** Copy the module folder into `Data/modules/withinearshot/` so you have `module.json`, `dist/`, `lang/`, etc. (same layout as inside the zip).
+
+**Console:** Warnings like `unreachable code after return` in **`vendor.mjs`** come from Foundry’s own bundles, not this module — safe to ignore.
+
+**Develop:** `npm install` → `npm run build`. Release package: `npm run release-pack` → upload **`withinearshot.zip`** to a GitHub Release, or push a `v*` tag and let `.github/workflows/release.yml` attach it.
 
 **License:** PolyForm Noncommercial 1.0.0 — non-commercial use; modification and private/non-commercial sharing allowed. See `LICENSE`.

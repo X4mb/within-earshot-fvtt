@@ -1,15 +1,15 @@
 /**
- * Builds module.zip with module.json at the archive root (required by Foundry).
- * Upload this file as a GitHub Release asset named module.zip so the manifest
- * "download" URL (releases/latest/download/module.zip) works.
+ * Builds {moduleId}.zip with module.json at the archive root (Foundry requirement).
+ * Upload as a GitHub Release asset using the same filename (e.g. withinearshot.zip).
  */
-import { createWriteStream, existsSync } from 'fs';
+import { createWriteStream, existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import archiver from 'archiver';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const outPath = join(root, 'module.zip');
+const moduleJson = JSON.parse(readFileSync(join(root, 'module.json'), 'utf8'));
+const outPath = join(root, `${moduleJson.id}.zip`);
 
 if (!existsSync(join(root, 'dist', 'withinearshot.js'))) {
   console.error('[withinearshot] dist/withinearshot.js missing — run npm run build first.');

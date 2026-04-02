@@ -1,6 +1,6 @@
-# On each version tag (v*), build module.zip and attach it to the GitHub Release.
-# Foundry’s manifest "download" URL requires this file: …/releases/.../download/module.zip
-name: Release module.zip
+# On each version tag (v*), build {moduleId}.zip and attach it to the GitHub Release.
+# Manifest "download" must match: …/releases/.../download/withinearshot.zip
+name: Release package zip
 on:
   push:
     tags:
@@ -25,5 +25,5 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: module.zip
+          files: withinearshot.zip
           generate_release_notes: true
