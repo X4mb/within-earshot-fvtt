@@ -8,8 +8,7 @@ let rafId = 0;
  * and Foundry sorts by `document.elevation`; a PIXI.Graphics breaks the layer.
  * Sibling Graphics on `canvas.tokens` with positions converted from token world space.
  */
-function ensureGraphics(): PIXI.Graphics {
-  const layer = canvas.tokens!;
+function ensureGraphics(layer: NonNullable<Canvas['tokens']>): PIXI.Graphics {
   let g = layer.getChildByName(VOICE_INDICATOR_LAYER) as PIXI.Graphics | undefined;
   if (!g) {
     g = new PIXI.Graphics();
@@ -22,8 +21,7 @@ function ensureGraphics(): PIXI.Graphics {
   return g;
 }
 
-function positionOnTokenLayer(g: PIXI.Graphics, token: Token): void {
-  const layer = canvas.tokens!;
+function positionOnTokenLayer(layer: NonNullable<Canvas['tokens']>, g: PIXI.Graphics, token: Token): void {
   const pt = new PIXI.Point();
   token.getGlobalPosition(pt);
   layer.toLocal(pt, undefined, pt);
@@ -36,7 +34,8 @@ function positionOnTokenLayer(g: PIXI.Graphics, token: Token): void {
  */
 export function redrawVoiceIndicator(): void {
   if (!canvas?.ready || !canvas.tokens) return;
-  const g = ensureGraphics();
+  const tokenLayer = canvas.tokens;
+  const g = ensureGraphics(tokenLayer);
   g.clear();
 
   const user = game.user;
@@ -44,7 +43,7 @@ export function redrawVoiceIndicator(): void {
   const token = getVoiceSourceTokenForDisplay(user);
   if (!token) return;
 
-  positionOnTokenLayer(g, token);
+  positionOnTokenLayer(tokenLayer, g, token);
 
   const d = canvas.dimensions?.distance ?? 100;
   const rx = ((token.document.width * d) / 2) * 0.92;

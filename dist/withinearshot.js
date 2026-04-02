@@ -611,8 +611,7 @@ async function persistVoiceProfileFlag(actor, profile) {
 
 // src/voiceIndicatorLayer.ts
 var rafId = 0;
-function ensureGraphics() {
-  const layer = canvas.tokens;
+function ensureGraphics(layer) {
   let g = layer.getChildByName(VOICE_INDICATOR_LAYER);
   if (!g) {
     g = new PIXI.Graphics();
@@ -624,8 +623,7 @@ function ensureGraphics() {
   }
   return g;
 }
-function positionOnTokenLayer(g, token) {
-  const layer = canvas.tokens;
+function positionOnTokenLayer(layer, g, token) {
   const pt = new PIXI.Point();
   token.getGlobalPosition(pt);
   layer.toLocal(pt, void 0, pt);
@@ -634,13 +632,14 @@ function positionOnTokenLayer(g, token) {
 }
 function redrawVoiceIndicator() {
   if (!canvas?.ready || !canvas.tokens) return;
-  const g = ensureGraphics();
+  const tokenLayer = canvas.tokens;
+  const g = ensureGraphics(tokenLayer);
   g.clear();
   const user = game.user;
   if (!user) return;
   const token = getVoiceSourceTokenForDisplay(user);
   if (!token) return;
-  positionOnTokenLayer(g, token);
+  positionOnTokenLayer(tokenLayer, g, token);
   const d = canvas.dimensions?.distance ?? 100;
   const rx = token.document.width * d / 2 * 0.92;
   const ry = token.document.height * d / 2 * 0.92;
