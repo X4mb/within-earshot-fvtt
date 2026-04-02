@@ -2,7 +2,7 @@
   "id": "withinearshot",
   "title": "Within Earshot",
   "description": "<p>Proximity voice for Foundry: remote volume follows token distance and walls. Optional GM global voice and voice-token shortcut. Any system.</p><p><strong>Voice token shortcut (default Ctrl+Shift+V):</strong> select a token you control, then press the shortcut to pin your voice to that token; press again on the same token to clear and fall back to automatic (assigned character) position. Rebind under <em>Configure Controls</em> → Within Earshot. <strong>GM:</strong> assign a key there for “Toggle GM voice” (global vs token proximity) if you want it on the keyboard.</p><p><strong>Install:</strong> Setup → Add-on Modules → <em>Install Module</em> → <code>https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json</code></p>",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "authors": [{ "name": "X4mb", "url": "https://github.com/X4mb" }],
   "compatibility": {
     "minimum": "14",
@@ -10,7 +10,7 @@
   },
   "url": "https://github.com/X4mb/within-earshot-fvtt",
   "manifest": "https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json",
-  "download": "https://github.com/X4mb/within-earshot-fvtt/releases/latest/download/withinearshot.zip",
+  "download": "https://github.com/X4mb/within-earshot-fvtt/releases/latest/download/module.zip",
   "bugs": "https://github.com/X4mb/within-earshot-fvtt/issues",
   "license": "LICENSE",
   "esmodules": ["dist/withinearshot.js"],
