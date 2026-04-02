@@ -51,7 +51,7 @@ export function registerModuleSettings(): void {
     scope: 'world',
     config: true,
     type: Boolean,
-    default: true,
+    default: false,
   });
 
   s().register(MODULE_ID, SETTINGS.THROUGH_WALL_GAIN, {

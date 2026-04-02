@@ -1,6 +1,6 @@
 # Within Earshot
 
-Foundry **v14+** module: proximity voice over Simple Peer / WebRTC — remote volume follows token distance and walls, with optional GM global voice and a voice-token shortcut. Works with any game system.
+Foundry **v13+** module: proximity voice over Simple Peer / WebRTC — remote volume follows token distance and walls, with optional GM global voice and a voice-token shortcut. Works with any game system.
 
 **Controls:** **Ctrl+Shift+V** (default) — with a token selected, pins your voice to that token for proximity; press again on the same token to clear. Change bindings under **Configure Controls** → *Within Earshot*. GMs can assign a key for “Toggle GM voice” (global vs token proximity) if desired.
 
