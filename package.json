@@ -1,0 +1,20 @@
+{
+  "name": "withinearshot",
+  "version": "1.0.0",
+  "private": true,
+  "author": "X4mb",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/module.ts --bundle --outfile=dist/withinearshot.js --format=esm --platform=neutral --target=es2022 --sourcemap && node scripts/deploy.mjs",
+    "watch": "esbuild src/module.ts --bundle --outfile=dist/withinearshot.js --format=esm --platform=neutral --target=es2022 --sourcemap --watch",
+    "deploy": "npm run build",
+    "release-pack": "npm run build && node scripts/package-release.mjs"
+  },
+  "devDependencies": {
+    "@league-of-foundry-developers/foundry-vtt-types": "^13.346.0-beta.20250812191140",
+    "archiver": "^7.0.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

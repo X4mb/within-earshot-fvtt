@@ -1,0 +1,18 @@
+{
+  "id": "withinearshot",
+  "title": "Within Earshot",
+  "description": "<p>Proximity voice for Foundry: remote volume follows token distance and walls. Optional GM global voice and voice-token shortcut. Any system.</p><p><strong>Install:</strong> Setup → Add-on Modules → <em>Install Module</em> → <code>https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json</code></p>",
+  "version": "1.0.0",
+  "authors": [{ "name": "X4mb", "url": "https://github.com/X4mb" }],
+  "compatibility": {
+    "minimum": "14",
+    "verified": "14.359"
+  },
+  "url": "https://github.com/X4mb/within-earshot-fvtt",
+  "manifest": "https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json",
+  "download": "https://github.com/X4mb/within-earshot-fvtt/releases/latest/download/module.zip",
+  "bugs": "https://github.com/X4mb/within-earshot-fvtt/issues",
+  "license": "LICENSE",
+  "esmodules": ["dist/withinearshot.js"],
+  "languages": [{ "lang": "en", "name": "English", "path": "lang/en.json" }]
+}

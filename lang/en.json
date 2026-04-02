@@ -1,0 +1,34 @@
+{
+  "SETTINGS": {
+    "maxRange": {
+      "name": "Maximum range (grid units)",
+      "hint": "Beyond this many grid spaces (Foundry ruler units). One unit = one map cell."
+    },
+    "gmVoiceGlobal": {
+      "name": "GM voice: full volume everywhere",
+      "hint": "When enabled, the GM is always heard at full volume (no proximity). When disabled, the GM uses token proximity like everyone else."
+    },
+    "throughWallGain": {
+      "name": "Voice through walls",
+      "hint": "GM only (world setting). How much volume remains after a Normal sound wall. 1 = no muffling; lower = quieter through walls."
+    },
+    "muteUnresolvedSpeaker": {
+      "name": "Mute voice when speaker token unknown",
+      "hint": "When enabled, a player whose speaking position cannot be placed on the map is inaudible to other players (GM still hears them). When disabled (default), they are heard at full volume until a token exists — avoids “GM hears me, players don’t.”"
+    },
+    "toggleGMVoiceGlobal": {
+      "name": "Toggle GM voice (global vs token proximity)",
+      "hint": "GM only: switch between global GM voice and token-based proximity."
+    },
+    "toggleVoiceToken": {
+      "name": "Toggle voice token (selected)",
+      "hint": "With a token selected, set or clear that token as your voice position. Default: Ctrl+Shift+V."
+    }
+  },
+  "VOICE": {
+    "cannotPick": "You can only set your voice token to a token you own.",
+    "cleared": "Voice position: automatic (assigned character token).",
+    "set": "Voice position: speaking as {name}.",
+    "needSelection": "Select a token first (control it), then use the voice token keybinding."
+  }
+}

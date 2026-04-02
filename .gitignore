@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+
+# Release artifact for GitHub (upload to Releases, do not commit)
+module.zip
