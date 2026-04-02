@@ -4,5 +4,5 @@ node_modules/
 .env
 .env.*
 
-# Packaged module zip (do not commit)
-module.zip
+# Packaged module zips (do not commit)
+*.zip

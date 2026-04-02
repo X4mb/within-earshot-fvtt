@@ -172,7 +172,7 @@ function registerModuleSettings() {
     scope: "world",
     config: true,
     type: Boolean,
-    default: true
+    default: false
   });
   s().register(MODULE_ID, SETTINGS.THROUGH_WALL_GAIN, {
     name: loc(`${MODULE_ID}.SETTINGS.throughWallGain.name`, "Voice through walls"),
