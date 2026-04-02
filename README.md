@@ -42,6 +42,16 @@ You still use Foundry’s normal **Audio / Video** connection; this module only 
 
 ---
 
+## Host setup (HTTPS & permissions)
+
+This module only changes volume once voice is working — **Foundry’s own Audio / Video** must be available first.
+
+- **HTTPS / certificate** — Browsers only expose the **microphone** and **WebRTC** in a **secure context**: **HTTPS** with a valid certificate, or **`http://localhost`** for local testing. On a plain **`http://`** URL (remote server, no TLS), voice chat **usually cannot be enabled** at all. Configure your reverse proxy or hosting so Foundry is served over **HTTPS**.
+
+- **Player role & broadcast audio** — The default **Player** role **does not always include** permission to **broadcast audio** (and sometimes video). If players cannot transmit voice, the **GM** must adjust **core permissions** (e.g. **Configure Settings → Permissions**): grant **Broadcast Audio** to **Player**, use **Trusted Player** where appropriate, or set per-user options under **Users** so everyone who should speak has the right to send audio.
+
+---
+
 ## Install
 
 **Foundry:** *Setup → Add-on Modules → Install Module* → paste the manifest URL. On GitHub, use the **copy** button on the code block.
