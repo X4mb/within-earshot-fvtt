@@ -18,6 +18,8 @@ https://github.com/X4mb/within-earshot-fvtt
 
 For updates, use the same manifest URL or install from a [release](https://github.com/X4mb/within-earshot-fvtt/releases) (`module.zip`).
 
-**Develop:** `npm install` → `npm run build`. Release package: `npm run release-pack` (attach `module.zip` to a GitHub Release).
+**Install errors (`ENOENT` … `withinearshot.zip`):** Foundry downloads the package from the manifest’s **`download`** URL (`…/releases/…/download/module.zip`). That file must exist on GitHub. If you see this error, the release is missing **`module.zip`** (wrong filename, or no release). Fix: create or edit a [Release](https://github.com/X4mb/within-earshot-fvtt/releases) for the current tag and attach **`module.zip`** from `npm run release-pack`, **or** push a new `v*` tag after enabling Actions — the workflow in `.github/workflows/release.yml` builds and uploads **`module.zip`** automatically.
+
+**Develop:** `npm install` → `npm run build`. Release package: `npm run release-pack` (attach `module.zip` to a GitHub Release, or rely on the release workflow when you push a `v*` tag).
 
 **License:** PolyForm Noncommercial 1.0.0 — non-commercial use; modification and private/non-commercial sharing allowed. See `LICENSE`.
