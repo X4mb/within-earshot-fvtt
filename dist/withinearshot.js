@@ -400,6 +400,12 @@ function getFoundryClientGainForPeer(userId) {
     if (!u) {
       tag = "no_user_row";
       result = 1;
+    } else if (u.muted) {
+      tag = "muted";
+      result = 0;
+    } else if (u.blocked) {
+      tag = "blocked";
+      result = 0;
     } else {
       const v = u.volume;
       if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -508,6 +514,9 @@ var ProximityAudioRouter = class {
   refreshAllGains(_force = true) {
     for (const id of this.peers.keys()) this.refreshGain(id);
   }
+  hasPeer(userId) {
+    return this.peers.has(userId);
+  }
   get peerCount() {
     return this.peers.size;
   }
@@ -559,29 +568,39 @@ function scheduleProximityRefresh() {
 
 // src/ProximitySimplePeerAVClient.ts
 var Base = foundry.av.clients.SimplePeerAVClient;
+var WIRE_RETRY_DELAY_MS = 100;
+var WIRE_MAX_ATTEMPTS = 30;
 var ProximitySimplePeerAVClient = class extends Base {
+  /** Pending video elements awaiting Web Audio wiring before being muted. */
+  #videoElements = /* @__PURE__ */ new Map();
   async initializePeerStream(userId) {
     const inst = await super.initializePeerStream(userId);
-    await this.#wirePeerWhenReady(userId);
+    void this.#wirePeerWhenReady(userId);
     return inst;
   }
   async disconnectPeer(userId) {
+    this.#videoElements.delete(userId);
     proximityRouter.detachPeer(userId);
     return super.disconnectPeer(userId);
   }
   async disconnectAll() {
+    this.#videoElements.clear();
     proximityRouter.detachAll();
     return super.disconnectAll();
   }
   async disconnect() {
+    this.#videoElements.clear();
     proximityRouter.detachAll();
     return super.disconnect();
   }
   async setUserVideo(userId, videoElement) {
     await super.setUserVideo(userId, videoElement);
     if (userId !== game.user?.id) {
-      videoElement.muted = true;
-      videoElement.volume = 0;
+      this.#videoElements.set(userId, videoElement);
+      if (proximityRouter.hasPeer(userId)) {
+        videoElement.muted = true;
+        videoElement.volume = 0;
+      }
     }
     scheduleProximityRefresh();
   }
@@ -590,14 +609,24 @@ var ProximitySimplePeerAVClient = class extends Base {
     scheduleProximityRefresh();
   }
   async #wirePeerWhenReady(userId, attempt = 0) {
-    const stream = this.remoteStreams.get(userId);
+    const stream = this.getMediaStreamForUser(userId);
     if (stream && stream.getAudioTracks().length > 0) {
       proximityRouter.attachPeer(userId, stream);
       await proximityRouter.ensureResumed();
+      const el = this.#videoElements.get(userId);
+      if (el) {
+        el.muted = true;
+        el.volume = 0;
+      }
       return;
     }
-    if (attempt > 30) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (attempt >= WIRE_MAX_ATTEMPTS) {
+      console.warn(
+        `[withinearshot] Could not attach Web Audio for user ${userId} after ${WIRE_MAX_ATTEMPTS} attempts. Audio will play through the video element instead (no proximity attenuation).`
+      );
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, WIRE_RETRY_DELAY_MS));
     return this.#wirePeerWhenReady(userId, attempt + 1);
   }
 };
@@ -640,10 +669,10 @@ function redrawVoiceIndicator() {
   const token = getVoiceSourceTokenForDisplay(user);
   if (!token) return;
   positionOnTokenLayer(tokenLayer, g, token);
-  const d = canvas.dimensions?.distance ?? 100;
-  const rx = token.document.width * d / 2 * 0.92;
-  const ry = token.document.height * d / 2 * 0.92;
-  const lw = Math.max(4, d * 0.12);
+  const cellPx = canvas.dimensions?.size ?? 100;
+  const rx = token.document.width * cellPx / 2 * 0.92;
+  const ry = token.document.height * cellPx / 2 * 0.92;
+  const lw = Math.max(4, cellPx * 0.12);
   const gfx = g;
   if (typeof gfx.ellipse === "function" && typeof gfx.stroke === "function") {
     const v8 = gfx;
@@ -796,6 +825,12 @@ Hooks.once("ready", async () => {
       }
     }
   });
+  H.on("clientSettingChanged", (...args) => {
+    const [namespace, key] = args;
+    if (namespace === MODULE_ID && (key === SETTINGS.GM_VOICE_GLOBAL || key === SETTINGS.MAX_RANGE || key === SETTINGS.THROUGH_WALL_GAIN || key === SETTINGS.MUTE_UNRESOLVED_SPEAKER))
+      scheduleProximityRefresh();
+    if (namespace === "core" && key === "rtcClientSettings") scheduleProximityRefresh();
+  });
   window.addEventListener("pointerdown", () => void proximityRouter.ensureResumed(), { once: true });
   async function setVoiceProfileForActor(actor, profile) {
     await persistVoiceProfileFlag(actor, profile);
@@ -816,13 +851,4 @@ Hooks.once("ready", async () => {
       copyAvSessionLogToClipboard
     };
 });
-Hooks.on(
-  "clientSettingChanged",
-  (...args) => {
-    const [namespace, key] = args;
-    if (namespace === MODULE_ID && (key === SETTINGS.GM_VOICE_GLOBAL || key === SETTINGS.MAX_RANGE || key === SETTINGS.THROUGH_WALL_GAIN || key === SETTINGS.MUTE_UNRESOLVED_SPEAKER))
-      scheduleProximityRefresh();
-    if (namespace === "core" && key === "rtcClientSettings") scheduleProximityRefresh();
-  }
-);
 //# sourceMappingURL=withinearshot.js.map

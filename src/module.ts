@@ -120,6 +120,19 @@ Hooks.once('ready', async () => {
       }
     }
   });
+  H.on('clientSettingChanged', (...args: unknown[]) => {
+    const [namespace, key] = args as [string, string];
+    if (
+      namespace === MODULE_ID &&
+      (key === SETTINGS.GM_VOICE_GLOBAL ||
+        key === SETTINGS.MAX_RANGE ||
+        key === SETTINGS.THROUGH_WALL_GAIN ||
+        key === SETTINGS.MUTE_UNRESOLVED_SPEAKER)
+    )
+      scheduleProximityRefresh();
+    /** Per-user A/V volume & mute live under core rtc client settings (not always covered by rtcSettingsChanged). */
+    if (namespace === 'core' && key === 'rtcClientSettings') scheduleProximityRefresh();
+  });
   window.addEventListener('pointerdown', () => void proximityRouter.ensureResumed(), { once: true });
 
   async function setVoiceProfileForActor(actor: Actor, profile: VoiceProfile | null): Promise<void> {
@@ -142,20 +155,3 @@ Hooks.once('ready', async () => {
       copyAvSessionLogToClipboard,
     };
 });
-
-(Hooks as unknown as { on(hook: string, fn: (...args: unknown[]) => void): number }).on(
-  'clientSettingChanged',
-  (...args: unknown[]) => {
-    const [namespace, key] = args as [string, string];
-    if (
-      namespace === MODULE_ID &&
-      (key === SETTINGS.GM_VOICE_GLOBAL ||
-        key === SETTINGS.MAX_RANGE ||
-        key === SETTINGS.THROUGH_WALL_GAIN ||
-        key === SETTINGS.MUTE_UNRESOLVED_SPEAKER)
-    )
-      scheduleProximityRefresh();
-    /** Per-user A/V volume & mute live under core rtc client settings (not always covered by rtcSettingsChanged). */
-    if (namespace === 'core' && key === 'rtcClientSettings') scheduleProximityRefresh();
-  },
-);

@@ -130,6 +130,10 @@ export class ProximityAudioRouter {
     for (const id of this.peers.keys()) this.refreshGain(id);
   }
 
+  hasPeer(userId: string): boolean {
+    return this.peers.has(userId);
+  }
+
   get peerCount(): number {
     return this.peers.size;
   }

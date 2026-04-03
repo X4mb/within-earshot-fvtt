@@ -9,14 +9,14 @@ export function clearClientGainStateForPeer(userId: string): void {
 
 /**
  * Foundry stores per-remote-user hearing preferences (volume, mute, block) in client AV settings.
- * Default SimplePeer routes audio through the video element volume; we use Web Audio, so we must apply
- * the same factors on a GainNode.
+ * Default SimplePeer routes audio through the video element volume; we use Web Audio, so we must
+ * apply the same factors on a GainNode.
  *
- * `getUser()` can report `volume: 0` before the A/V dock applies defaults — that silences everyone
- * on our graph. Treat numeric `<= 0` as full (then apply volume when > 0).
- *
- * **Web Audio:** per-user `muted` / `blocked` from the dock often does not match our routed stream
- * (same issue for GMs and players). Apply **volume** only; use **mute all** to silence everyone.
+ * Priority (first match wins):
+ *   1. muteAll          → 0  (global mute-all from client)
+ *   2. muted || blocked → 0  (per-user dock mute or block)
+ *   3. volume <= 0      → 1  (Foundry reports 0 before the dock applies its default — treat as full)
+ *   4. otherwise        → volume (0–1)
  */
 export function getFoundryClientGainForPeer(userId: string): number {
   let tag: string;
@@ -34,6 +34,12 @@ export function getFoundryClientGainForPeer(userId: string): number {
     if (!u) {
       tag = 'no_user_row';
       result = 1;
+    } else if (u.muted) {
+      tag = 'muted';
+      result = 0;
+    } else if (u.blocked) {
+      tag = 'blocked';
+      result = 0;
     } else {
       const v = u.volume;
       if (typeof v !== 'number' || !Number.isFinite(v)) {

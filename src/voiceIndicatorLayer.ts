@@ -45,10 +45,10 @@ export function redrawVoiceIndicator(): void {
 
   positionOnTokenLayer(tokenLayer, g, token);
 
-  const d = canvas.dimensions?.distance ?? 100;
-  const rx = ((token.document.width * d) / 2) * 0.92;
-  const ry = ((token.document.height * d) / 2) * 0.92;
-  const lw = Math.max(4, d * 0.12);
+  const cellPx = canvas.dimensions?.size ?? 100;
+  const rx = ((token.document.width * cellPx) / 2) * 0.92;
+  const ry = ((token.document.height * cellPx) / 2) * 0.92;
+  const lw = Math.max(4, cellPx * 0.12);
 
   const gfx = g as PIXI.Graphics & Record<string, unknown>;
   if (typeof gfx.ellipse === 'function' && typeof gfx.stroke === 'function') {
