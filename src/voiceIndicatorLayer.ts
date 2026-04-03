@@ -46,33 +46,30 @@ export function redrawVoiceIndicator(): void {
   positionOnTokenLayer(tokenLayer, g, token);
 
   const cellPx = canvas.dimensions?.size ?? 100;
-  const rx = ((token.document.width * cellPx) / 2) * 0.92;
-  const ry = ((token.document.height * cellPx) / 2) * 0.92;
-  const lw = Math.max(4, cellPx * 0.12);
+  const dotR = Math.max(5, cellPx * 0.08);
+  const tw = token.document.width * cellPx;
+  const th = token.document.height * cellPx;
+  const dx = tw - dotR * 0.6;
+  const dy = th - dotR * 0.6;
 
   const gfx = g as PIXI.Graphics & Record<string, unknown>;
-  if (typeof gfx.ellipse === 'function' && typeof gfx.stroke === 'function') {
+  if (typeof gfx.circle === 'function' && typeof gfx.fill === 'function') {
     const v8 = gfx as unknown as {
-      ellipse: (x: number, y: number, rx: number, ry: number) => void;
-      stroke: (o: { width: number; color: number; alpha: number }) => void;
+      circle: (x: number, y: number, r: number) => void;
+      fill: (o: { color: number; alpha: number }) => void;
     };
-    v8.ellipse(0, 0, rx, ry);
-    v8.stroke({ width: lw, color: 0x33ffcc, alpha: 1 });
-  } else if (typeof gfx.lineStyle === 'function' && typeof gfx.drawEllipse === 'function') {
-    const leg = gfx as {
-      lineStyle: (w: number, c: number, a?: number) => void;
-      drawEllipse: (x: number, y: number, xr: number, yr: number) => void;
-    };
-    leg.lineStyle(lw, 0x33ffcc, 1);
-    leg.drawEllipse(0, 0, rx, ry);
+    v8.circle(dx, dy, dotR);
+    v8.fill({ color: 0x33ffcc, alpha: 1 });
   } else {
-    const anyG = gfx as {
-      lineStyle?: (w: number, c: number, a?: number) => void;
+    const leg = gfx as {
+      beginFill?: (c: number, a?: number) => void;
       drawCircle?: (x: number, y: number, r: number) => void;
+      endFill?: () => void;
     };
-    if (typeof anyG.lineStyle === 'function' && typeof anyG.drawCircle === 'function') {
-      anyG.lineStyle(lw, 0x33ffcc, 1);
-      anyG.drawCircle(0, 0, Math.max(rx, ry));
+    if (typeof leg.beginFill === 'function' && typeof leg.drawCircle === 'function') {
+      leg.beginFill(0x33ffcc, 1);
+      leg.drawCircle(dx, dy, dotR);
+      leg.endFill?.();
     }
   }
 }

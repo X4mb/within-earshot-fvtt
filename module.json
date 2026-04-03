@@ -2,7 +2,7 @@
   "id": "withinearshot",
   "title": "Within Earshot",
   "description": "<p><strong>Foundry v13+</strong> (minimum). <strong>Verified</strong> on core <strong>14.359</strong>. Proximity voice: remote volume follows token distance and walls. Optional GM global voice and a voice-token shortcut. Any game system.</p><p><strong>Voice token shortcut (default Ctrl+Shift+V):</strong> select a token you control, then press the shortcut to pin your voice to that token; press again on the same token to clear and fall back to automatic (assigned character) position. Rebind under <em>Configure Controls</em> → Within Earshot. <strong>GM:</strong> assign a key there for &ldquo;Toggle GM voice&rdquo; (global vs token proximity) if you want it on the keyboard.</p><p><strong>Host setup:</strong> A/V requires HTTPS — see <a href=&quot;https://foundryvtt.com/article/ssl/&quot;>Foundry: TLS and HTTPS</a>. Roles and broadcast permissions: <a href=&quot;https://foundryvtt.com/article/users/&quot;>Users and Permissions</a>.</p><p><strong>Install:</strong> Setup → Add-on Modules → <em>Install Module</em> → <code>https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json</code></p>",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "authors": [{ "name": "X4mb", "url": "https://github.com/X4mb" }],
   "compatibility": {
     "minimum": "13",
