@@ -1230,12 +1230,44 @@ Hooks.once("init", () => {
   console.log(`[${MODULE_ID}] v${version} init`);
 });
 var HooksOn = Hooks;
+var dlog = (msg, ...rest) => console.log(`[${MODULE_ID}] ${msg}`, ...rest);
+HooksOn.on("getTokenPlaceableContextOptions", (...args) => {
+  if (!game.user?.isGM) return;
+  dlog("getTokenPlaceableContextOptions fired");
+  const options = args[1];
+  const resolveTokenActor = (target) => {
+    if (target instanceof HTMLElement) {
+      const el = target.closest("[data-token-id], [data-object-id], [data-entry-id]") ?? target;
+      const ds = el.dataset;
+      const id = ds.tokenId ?? ds.objectId ?? ds.entryId;
+      const tok = id ? canvas?.tokens?.get(id) : null;
+      if (tok?.actor) return tok.actor;
+    } else if (target && typeof target === "object") {
+      const t = target;
+      if (t.actor) return t.actor;
+      if (t.document?.actor) return t.document.actor;
+    }
+    const layer = canvas?.tokens;
+    return layer?.hover?.actor ?? layer?.controlled[0]?.actor ?? null;
+  };
+  options.push({
+    name: "Assign Voice",
+    icon: '<i class="fas fa-microphone-alt"></i>',
+    condition: (t) => !!resolveTokenActor(t),
+    callback: (t) => {
+      const actor = resolveTokenActor(t);
+      if (actor) openVoiceAssignDialogForActor(actor);
+      else dlog("token context: could not resolve actor for menu target");
+    }
+  });
+});
 HooksOn.on("renderTokenHUD", (...args) => {
   if (!game.user?.isGM) return;
   const app = args[0];
   const el = args[1];
   const root = el instanceof HTMLElement ? el : el?.[0] ?? null;
   const actor = app.object?.actor ?? app.document?.actor ?? null;
+  dlog("renderTokenHUD fired", { hasRoot: !!root, hasActor: !!actor });
   if (!root || !actor) return;
   if (root.querySelector("[data-withinearshot-assign-voice]")) return;
   const col = root.querySelector(".col.right") ?? root.querySelector(".col.left") ?? root;
@@ -1259,9 +1291,10 @@ var injectTokenConfigVoiceSection = (...args) => {
   const root = el instanceof HTMLElement ? el : el?.[0] ?? null;
   if (!root || root.querySelector("[data-withinearshot-assign-voice]")) return;
   const actor = app.actor ?? app.token?.actor ?? app.token?.parent ?? app.document?.actor ?? app.document?.parent ?? null;
-  if (!actor) return;
   const tab = root.querySelector('.tab[data-tab="identity"]') ?? root.querySelector('[data-tab="identity"]');
-  if (!tab) return;
+  dlog("renderTokenConfig fired", { hasActor: !!actor, hasIdentityTab: !!tab });
+  if (!actor) return;
+  const host = tab ?? root.querySelector(".window-content") ?? root;
   const fs = document.createElement("fieldset");
   fs.setAttribute("data-withinearshot-assign-voice", "");
   const legend = document.createElement("legend");
@@ -1278,12 +1311,13 @@ var injectTokenConfigVoiceSection = (...args) => {
   hint.className = "hint";
   hint.textContent = "Voice profile is saved on the actor and applies to all tokens of this actor.";
   fs.append(legend, btn, hint);
-  tab.appendChild(fs);
+  host.appendChild(fs);
 };
 HooksOn.on("renderTokenConfig", injectTokenConfigVoiceSection);
 HooksOn.on("renderPrototypeTokenConfig", injectTokenConfigVoiceSection);
 HooksOn.on("getActorContextOptions", (...args) => {
   if (!game.user?.isGM) return;
+  dlog("getActorContextOptions fired");
   const options = args[1];
   const resolveActor = (li) => {
     const raw = li instanceof HTMLElement ? li : li?.[0] ?? null;

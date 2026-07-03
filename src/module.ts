@@ -68,6 +68,49 @@ Hooks.once('init', () => {
  */
 const HooksOn = Hooks as unknown as { on(hook: string, fn: (...args: unknown[]) => void): number };
 
+/** Test-build diagnostics: every entry-point hook logs, so a remote install can report what fired. */
+const dlog = (msg: string, ...rest: unknown[]): void => console.log(`[${MODULE_ID}] ${msg}`, ...rest);
+
+/**
+ * v14 canvas-token right-click context menu (get{PlaceableType}PlaceableContextOptions).
+ * The menu target may be the Token placeable or an element carrying its id.
+ */
+HooksOn.on('getTokenPlaceableContextOptions', (...args: unknown[]) => {
+  if (!game.user?.isGM) return;
+  dlog('getTokenPlaceableContextOptions fired');
+  const options = args[1] as Array<{
+    name: string;
+    icon: string;
+    condition?: (t: unknown) => boolean;
+    callback: (t: unknown) => void;
+  }>;
+  const resolveTokenActor = (target: unknown): Actor | null => {
+    if (target instanceof HTMLElement) {
+      const el = target.closest('[data-token-id], [data-object-id], [data-entry-id]') ?? target;
+      const ds = (el as HTMLElement).dataset;
+      const id = ds.tokenId ?? ds.objectId ?? ds.entryId;
+      const tok = id ? canvas?.tokens?.get(id) : null;
+      if (tok?.actor) return tok.actor;
+    } else if (target && typeof target === 'object') {
+      const t = target as { actor?: Actor | null; document?: { actor?: Actor | null } | null };
+      if (t.actor) return t.actor;
+      if (t.document?.actor) return t.document.actor;
+    }
+    const layer = canvas?.tokens as unknown as { hover?: Token | null; controlled: Token[] } | undefined;
+    return layer?.hover?.actor ?? layer?.controlled[0]?.actor ?? null;
+  };
+  options.push({
+    name: 'Assign Voice',
+    icon: '<i class="fas fa-microphone-alt"></i>',
+    condition: (t: unknown) => !!resolveTokenActor(t),
+    callback: (t: unknown) => {
+      const actor = resolveTokenActor(t);
+      if (actor) openVoiceAssignDialogForActor(actor);
+      else dlog('token context: could not resolve actor for menu target');
+    },
+  });
+});
+
 /**
  * Core has no canvas-token context menu (right-click opens the Token HUD), so the HUD is the
  * on-board GM entry point: microphone button → Assign Voice dialog.
@@ -79,6 +122,7 @@ HooksOn.on('renderTokenHUD', (...args: unknown[]) => {
   // v13+ passes an HTMLElement; older versions pass jQuery.
   const root = el instanceof HTMLElement ? el : ((el as JQuery)?.[0] ?? null);
   const actor = app.object?.actor ?? app.document?.actor ?? null;
+  dlog('renderTokenHUD fired', { hasRoot: !!root, hasActor: !!actor });
   if (!root || !actor) return;
   if (root.querySelector('[data-withinearshot-assign-voice]')) return;
   const col = root.querySelector('.col.right') ?? root.querySelector('.col.left') ?? root;
@@ -113,9 +157,11 @@ const injectTokenConfigVoiceSection = (...args: unknown[]): void => {
   // Placed token config: document.actor. Prototype config: the PrototypeToken's parent actor.
   const actor =
     app.actor ?? app.token?.actor ?? app.token?.parent ?? app.document?.actor ?? app.document?.parent ?? null;
-  if (!actor) return;
   const tab = root.querySelector('.tab[data-tab="identity"]') ?? root.querySelector('[data-tab="identity"]');
-  if (!tab) return;
+  dlog('renderTokenConfig fired', { hasActor: !!actor, hasIdentityTab: !!tab });
+  if (!actor) return;
+  // No identity tab found (layout differs): fall back to the window content so it shows somewhere.
+  const host = tab ?? root.querySelector('.window-content') ?? root;
   const fs = document.createElement('fieldset');
   fs.setAttribute('data-withinearshot-assign-voice', '');
   const legend = document.createElement('legend');
@@ -132,7 +178,7 @@ const injectTokenConfigVoiceSection = (...args: unknown[]): void => {
   hint.className = 'hint';
   hint.textContent = 'Voice profile is saved on the actor and applies to all tokens of this actor.';
   fs.append(legend, btn, hint);
-  tab.appendChild(fs);
+  host.appendChild(fs);
 };
 HooksOn.on('renderTokenConfig', injectTokenConfigVoiceSection);
 HooksOn.on('renderPrototypeTokenConfig', injectTokenConfigVoiceSection);
@@ -144,6 +190,7 @@ HooksOn.on('renderPrototypeTokenConfig', injectTokenConfigVoiceSection);
  */
 HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
   if (!game.user?.isGM) return;
+  dlog('getActorContextOptions fired');
   const options = args[1] as Array<{
     name: string;
     icon: string;
