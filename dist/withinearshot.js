@@ -1304,8 +1304,7 @@ Hooks.once("ready", async () => {
     const actor = app.object?.actor ?? null;
     if (!root || !actor) return;
     if (root.querySelector("[data-withinearshot-assign-voice]")) return;
-    const col = root.querySelector(".col.right");
-    if (!col) return;
+    const col = root.querySelector(".col.right") ?? root.querySelector(".col.left") ?? root;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "control-icon";
@@ -1318,6 +1317,24 @@ Hooks.once("ready", async () => {
       openVoiceAssignDialogForActor(actor);
     });
     col.appendChild(btn);
+  });
+  H.on("getActorContextOptions", (...args) => {
+    if (!game.user?.isGM) return;
+    const options = args[1];
+    const resolveActor = (li) => {
+      const el = li instanceof HTMLElement ? li : li?.[0] ?? null;
+      const id = el?.dataset.entryId ?? el?.dataset.documentId;
+      return id ? game.actors?.get(id) ?? null : null;
+    };
+    options.push({
+      name: "Assign Voice",
+      icon: '<i class="fas fa-microphone-alt"></i>',
+      condition: (li) => !!resolveActor(li),
+      callback: (li) => {
+        const actor = resolveActor(li);
+        if (actor) openVoiceAssignDialogForActor(actor);
+      }
+    });
   });
   H.on("clientSettingChanged", (...args) => {
     const [namespace, key] = args;

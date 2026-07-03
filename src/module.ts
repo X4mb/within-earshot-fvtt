@@ -148,8 +148,7 @@ Hooks.once('ready', async () => {
     const actor = app.object?.actor ?? null;
     if (!root || !actor) return;
     if (root.querySelector('[data-withinearshot-assign-voice]')) return;
-    const col = root.querySelector('.col.right');
-    if (!col) return;
+    const col = root.querySelector('.col.right') ?? root.querySelector('.col.left') ?? root;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'control-icon';
@@ -162,6 +161,35 @@ Hooks.once('ready', async () => {
       openVoiceAssignDialogForActor(actor);
     });
     col.appendChild(btn);
+  });
+
+  /**
+   * Actors-sidebar right-click menu (v13+ fires get{DocumentName}ContextOptions). The profile is
+   * stored on the world actor either way — token HUD assignments resolve to the same document —
+   * so unlinked board copies inherit it from here too.
+   */
+  H.on('getActorContextOptions', (...args: unknown[]) => {
+    if (!game.user?.isGM) return;
+    const options = args[1] as Array<{
+      name: string;
+      icon: string;
+      condition?: (li: unknown) => boolean;
+      callback: (li: unknown) => void;
+    }>;
+    const resolveActor = (li: unknown): Actor | null => {
+      const el = li instanceof HTMLElement ? li : ((li as JQuery)?.[0] ?? null);
+      const id = el?.dataset.entryId ?? el?.dataset.documentId;
+      return id ? (game.actors?.get(id) ?? null) : null;
+    };
+    options.push({
+      name: 'Assign Voice',
+      icon: '<i class="fas fa-microphone-alt"></i>',
+      condition: (li: unknown) => !!resolveActor(li),
+      callback: (li: unknown) => {
+        const actor = resolveActor(li);
+        if (actor) openVoiceAssignDialogForActor(actor);
+      },
+    });
   });
   H.on('clientSettingChanged', (...args: unknown[]) => {
     const [namespace, key] = args as [string, string];
