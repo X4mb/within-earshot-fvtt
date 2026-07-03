@@ -97,6 +97,47 @@ HooksOn.on('renderTokenHUD', (...args: unknown[]) => {
 });
 
 /**
+ * Token Config (placed token) and Prototype Token Config → Identity tab: "Assign Voice" section.
+ * The profile is saved on the world actor, so assigning here covers all tokens of that actor.
+ */
+const injectTokenConfigVoiceSection = (...args: unknown[]): void => {
+  if (!game.user?.isGM) return;
+  const app = args[0] as {
+    actor?: Actor | null;
+    token?: { actor?: Actor | null; parent?: Actor | null } | null;
+    document?: { actor?: Actor | null; parent?: Actor | null } | null;
+  };
+  const el = args[1];
+  const root = el instanceof HTMLElement ? el : ((el as JQuery)?.[0] ?? null);
+  if (!root || root.querySelector('[data-withinearshot-assign-voice]')) return;
+  // Placed token config: document.actor. Prototype config: the PrototypeToken's parent actor.
+  const actor =
+    app.actor ?? app.token?.actor ?? app.token?.parent ?? app.document?.actor ?? app.document?.parent ?? null;
+  if (!actor) return;
+  const tab = root.querySelector('.tab[data-tab="identity"]') ?? root.querySelector('[data-tab="identity"]');
+  if (!tab) return;
+  const fs = document.createElement('fieldset');
+  fs.setAttribute('data-withinearshot-assign-voice', '');
+  const legend = document.createElement('legend');
+  legend.textContent = 'Within Earshot';
+  const btn = document.createElement('button');
+  btn.type = 'button'; // must not submit the token config form
+  btn.innerHTML = '<i class="fas fa-microphone-alt"></i> Assign Voice';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openVoiceAssignDialogForActor(actor as Actor);
+  });
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = 'Voice profile is saved on the actor and applies to all tokens of this actor.';
+  fs.append(legend, btn, hint);
+  tab.appendChild(fs);
+};
+HooksOn.on('renderTokenConfig', injectTokenConfigVoiceSection);
+HooksOn.on('renderPrototypeTokenConfig', injectTokenConfigVoiceSection);
+
+/**
  * Actors-sidebar right-click menu (v13+ fires get{DocumentName}ContextOptions). The profile is
  * stored on the world actor either way — token HUD assignments resolve to the same document —
  * so unlinked board copies inherit it from here too.

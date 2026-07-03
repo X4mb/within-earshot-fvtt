@@ -1252,6 +1252,36 @@ HooksOn.on("renderTokenHUD", (...args) => {
   });
   col.appendChild(btn);
 });
+var injectTokenConfigVoiceSection = (...args) => {
+  if (!game.user?.isGM) return;
+  const app = args[0];
+  const el = args[1];
+  const root = el instanceof HTMLElement ? el : el?.[0] ?? null;
+  if (!root || root.querySelector("[data-withinearshot-assign-voice]")) return;
+  const actor = app.actor ?? app.token?.actor ?? app.token?.parent ?? app.document?.actor ?? app.document?.parent ?? null;
+  if (!actor) return;
+  const tab = root.querySelector('.tab[data-tab="identity"]') ?? root.querySelector('[data-tab="identity"]');
+  if (!tab) return;
+  const fs = document.createElement("fieldset");
+  fs.setAttribute("data-withinearshot-assign-voice", "");
+  const legend = document.createElement("legend");
+  legend.textContent = "Within Earshot";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.innerHTML = '<i class="fas fa-microphone-alt"></i> Assign Voice';
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openVoiceAssignDialogForActor(actor);
+  });
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "Voice profile is saved on the actor and applies to all tokens of this actor.";
+  fs.append(legend, btn, hint);
+  tab.appendChild(fs);
+};
+HooksOn.on("renderTokenConfig", injectTokenConfigVoiceSection);
+HooksOn.on("renderPrototypeTokenConfig", injectTokenConfigVoiceSection);
 HooksOn.on("getActorContextOptions", (...args) => {
   if (!game.user?.isGM) return;
   const options = args[1];
