@@ -6,7 +6,7 @@
 
 ## What it does
 
-Within Earshot changes how you **hear** other people in a call: instead of everyone at the same volume, each remote speaker’s volume depends on **where their token is** on the scene relative to **your** token. It also respects **sound walls** so voices can be quieter through obstacles, the way you’d expect in a tabletop space.
+Within Earshot changes how you **hear** other people in a call: instead of everyone at the same volume, each remote speaker’s volume depends on **where their token is** on the scene relative to **your** token. It also respects **sound walls** so voices can be quieter through obstacles.
 
 ---
 
