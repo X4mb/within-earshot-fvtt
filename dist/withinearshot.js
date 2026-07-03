@@ -1253,11 +1253,12 @@ HooksOn.on("getTokenPlaceableContextOptions", (...args) => {
   options.push({
     name: "Assign Voice",
     icon: '<i class="fas fa-microphone-alt"></i>',
-    condition: (t) => !!resolveTokenActor(t),
+    // Always visible for the GM: a failing resolver must not silently hide the entry.
+    condition: () => true,
     callback: (t) => {
       const actor = resolveTokenActor(t);
       if (actor) openVoiceAssignDialogForActor(actor);
-      else dlog("token context: could not resolve actor for menu target");
+      else ui.notifications?.warn("Within Earshot: could not resolve the token\u2019s actor for this menu.");
     }
   });
 });
@@ -1329,15 +1330,21 @@ HooksOn.on("getActorContextOptions", (...args) => {
   options.push({
     name: "Assign Voice",
     icon: '<i class="fas fa-microphone-alt"></i>',
-    condition: (li) => !!resolveActor(li),
+    // Always visible for the GM: a failing resolver must not silently hide the entry.
+    condition: () => true,
     callback: (li) => {
       const actor = resolveActor(li);
       if (actor) openVoiceAssignDialogForActor(actor);
+      else ui.notifications?.warn("Within Earshot: could not resolve the actor for this menu entry.");
     }
   });
 });
 Hooks.once("i18nInit", registerModuleSettings);
 Hooks.once("ready", async () => {
+  if (game.user?.isGM) {
+    const version = game.modules?.get(MODULE_ID)?.version ?? "?";
+    ui.notifications?.info(`Within Earshot (Test) v${version} active`);
+  }
   await clearVoiceTokenFlagForCurrentUser();
   const H = Hooks;
   H.on("controlObject", () => {

@@ -102,11 +102,12 @@ HooksOn.on('getTokenPlaceableContextOptions', (...args: unknown[]) => {
   options.push({
     name: 'Assign Voice',
     icon: '<i class="fas fa-microphone-alt"></i>',
-    condition: (t: unknown) => !!resolveTokenActor(t),
+    // Always visible for the GM: a failing resolver must not silently hide the entry.
+    condition: () => true,
     callback: (t: unknown) => {
       const actor = resolveTokenActor(t);
       if (actor) openVoiceAssignDialogForActor(actor);
-      else dlog('token context: could not resolve actor for menu target');
+      else ui.notifications?.warn('Within Earshot: could not resolve the token’s actor for this menu.');
     },
   });
 });
@@ -208,10 +209,12 @@ HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
   options.push({
     name: 'Assign Voice',
     icon: '<i class="fas fa-microphone-alt"></i>',
-    condition: (li: unknown) => !!resolveActor(li),
+    // Always visible for the GM: a failing resolver must not silently hide the entry.
+    condition: () => true,
     callback: (li: unknown) => {
       const actor = resolveActor(li);
       if (actor) openVoiceAssignDialogForActor(actor);
+      else ui.notifications?.warn('Within Earshot: could not resolve the actor for this menu entry.');
     },
   });
 });
@@ -225,6 +228,11 @@ HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
 Hooks.once('i18nInit', registerModuleSettings);
 
 Hooks.once('ready', async () => {
+  // Unmissable build marker for the GM: proves the test module is actually running this version.
+  if (game.user?.isGM) {
+    const version = (game.modules?.get(MODULE_ID) as { version?: string } | undefined)?.version ?? '?';
+    ui.notifications?.info(`Within Earshot (Test) v${version} active`);
+  }
   await clearVoiceTokenFlagForCurrentUser();
 
   const H = Hooks as unknown as { on(hook: string, fn: (...args: unknown[]) => void): number };
