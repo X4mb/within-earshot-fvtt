@@ -1,4 +1,6 @@
-# Within Earshot
+# Within Earshot (Test)
+
+> ⚠️ **This is the `test` branch** — a pre-release build (**v0.9.5**) installed as a **separate module** (`withinearshot-test`) so it can coexist with the release version. **Enable only one of the two per world**; settings and assigned voice profiles are stored separately. For the stable release, see the [`main` branch](https://github.com/X4mb/within-earshot-fvtt/tree/main).
 
 > Proximity-based voice for **Foundry Virtual Tabletop**. **Minimum:** v13. **Verified:** core **14.359**. Works with **any game system** and Foundry’s built-in **Simple Peer / WebRTC** voice — no extra voice server required.
 
@@ -30,7 +32,8 @@ You still use Foundry’s normal **Audio / Video** connection; this module only 
 - **GM voice: full volume everywhere** — Optional world toggle so the GM is always heard at full level for all players (off by default; GM can also use a **keybinding** to flip global vs proximity).
 - **Voice token shortcut** — Default **Ctrl+Shift+V** while a token is selected: **pin** your “speaking position” to that token, or **clear** the pin to fall back to your assigned character token. Rebind under **Configure Controls → Within Earshot**.
 - **Mute when speaker unknown** — Optional world rule: if a player’s speaking position can’t be resolved on the map, other players won’t hear them (GM still does). Off by default to avoid “GM hears me, players don’t” surprises.
-- **Visual hint** — Tokens used as the **proximity voice source** show a small **cyan ball** on the **top-left** of the token so you can see where that speaker’s voice is anchored on the map (it follows the token when it moves).
+- **Visual hint** — Tokens used as the **proximity voice source** show a small **cyan ball** on the corner of the token so you can see where that speaker’s voice is anchored on the map (it follows the token when it moves).
+- **GM voice changer** *(new in 0.9.5, being tested on this branch)* — Right-click a token → **Assign Voice** to store a voice profile on its actor (presets: Deep, High, Robot, Whisper, or Custom pitch/EQ). When the GM pins their voice to that token (**Ctrl+Shift+V**), their microphone is processed live so players hear the character’s voice; re-pinning another token switches voices instantly.
 
 ---
 
@@ -55,6 +58,14 @@ Within Earshot only adjusts volume — **Foundry’s built-in voice** must work 
 ## Install
 
 **Foundry:** *Setup → Add-on Modules → Install Module* → paste the manifest URL. On GitHub, use the **copy** button on the code block.
+
+**Test build (this branch):**
+
+```text
+https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/test/module.json
+```
+
+**Stable release:**
 
 ```text
 https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/main/module.json
