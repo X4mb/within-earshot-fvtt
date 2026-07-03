@@ -56,6 +56,76 @@ Hooks.once('init', () => {
   // Foundry requires keybindings to be registered during init (not ready), or setup throws.
   registerModuleKeybindings();
   registerVoiceTokenKeybinding();
+  // Lets a remote-updating install verify which build is actually running.
+  const version = (game.modules?.get(MODULE_ID) as { version?: string } | undefined)?.version ?? '?';
+  console.log(`[${MODULE_ID}] v${version} init`);
+});
+
+/**
+ * UI hooks live at module scope, NOT inside `ready`: the sidebar collects its context-menu
+ * entries when it first renders, which happens before `ready` fires — a listener registered
+ * there misses the initial render and the entry never appears.
+ */
+const HooksOn = Hooks as unknown as { on(hook: string, fn: (...args: unknown[]) => void): number };
+
+/**
+ * Core has no canvas-token context menu (right-click opens the Token HUD), so the HUD is the
+ * on-board GM entry point: microphone button → Assign Voice dialog.
+ */
+HooksOn.on('renderTokenHUD', (...args: unknown[]) => {
+  if (!game.user?.isGM) return;
+  const app = args[0] as { object?: Token | null; document?: TokenDocument | null };
+  const el = args[1];
+  // v13+ passes an HTMLElement; older versions pass jQuery.
+  const root = el instanceof HTMLElement ? el : ((el as JQuery)?.[0] ?? null);
+  const actor = app.object?.actor ?? app.document?.actor ?? null;
+  if (!root || !actor) return;
+  if (root.querySelector('[data-withinearshot-assign-voice]')) return;
+  const col = root.querySelector('.col.right') ?? root.querySelector('.col.left') ?? root;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'control-icon';
+  btn.setAttribute('data-withinearshot-assign-voice', '');
+  btn.title = 'Assign Voice (Within Earshot)';
+  btn.innerHTML = '<i class="fas fa-microphone-alt"></i>';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openVoiceAssignDialogForActor(actor);
+  });
+  col.appendChild(btn);
+});
+
+/**
+ * Actors-sidebar right-click menu (v13+ fires get{DocumentName}ContextOptions). The profile is
+ * stored on the world actor either way — token HUD assignments resolve to the same document —
+ * so unlinked board copies inherit it from here too.
+ */
+HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
+  if (!game.user?.isGM) return;
+  const options = args[1] as Array<{
+    name: string;
+    icon: string;
+    condition?: (li: unknown) => boolean;
+    callback: (li: unknown) => void;
+  }>;
+  const resolveActor = (li: unknown): Actor | null => {
+    const raw = li instanceof HTMLElement ? li : ((li as JQuery)?.[0] ?? null);
+    // The clicked element may be a child of the entry; search upward for the id carrier.
+    const entry = raw?.closest?.('[data-entry-id], [data-document-id], [data-actor-id]') ?? raw;
+    const ds = (entry as HTMLElement | null)?.dataset;
+    const id = ds?.entryId ?? ds?.documentId ?? ds?.actorId;
+    return id ? (game.actors?.get(id) ?? null) : null;
+  };
+  options.push({
+    name: 'Assign Voice',
+    icon: '<i class="fas fa-microphone-alt"></i>',
+    condition: (li: unknown) => !!resolveActor(li),
+    callback: (li: unknown) => {
+      const actor = resolveActor(li);
+      if (actor) openVoiceAssignDialogForActor(actor);
+    },
+  });
 });
 
 /**
@@ -134,62 +204,6 @@ Hooks.once('ready', async () => {
         }
       }
     }
-  });
-  /**
-   * Core has no canvas-token context menu (right-click opens the Token HUD), so the HUD is the
-   * GM entry point: microphone button in the right column → Assign Voice dialog.
-   */
-  H.on('renderTokenHUD', (...args: unknown[]) => {
-    if (!game.user?.isGM) return;
-    const app = args[0] as { object?: Token | null };
-    const el = args[1];
-    // v13+ passes an HTMLElement; older versions pass jQuery.
-    const root = el instanceof HTMLElement ? el : ((el as JQuery)?.[0] ?? null);
-    const actor = app.object?.actor ?? null;
-    if (!root || !actor) return;
-    if (root.querySelector('[data-withinearshot-assign-voice]')) return;
-    const col = root.querySelector('.col.right') ?? root.querySelector('.col.left') ?? root;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'control-icon';
-    btn.setAttribute('data-withinearshot-assign-voice', '');
-    btn.title = 'Assign Voice (Within Earshot)';
-    btn.innerHTML = '<i class="fas fa-microphone-alt"></i>';
-    btn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      openVoiceAssignDialogForActor(actor);
-    });
-    col.appendChild(btn);
-  });
-
-  /**
-   * Actors-sidebar right-click menu (v13+ fires get{DocumentName}ContextOptions). The profile is
-   * stored on the world actor either way — token HUD assignments resolve to the same document —
-   * so unlinked board copies inherit it from here too.
-   */
-  H.on('getActorContextOptions', (...args: unknown[]) => {
-    if (!game.user?.isGM) return;
-    const options = args[1] as Array<{
-      name: string;
-      icon: string;
-      condition?: (li: unknown) => boolean;
-      callback: (li: unknown) => void;
-    }>;
-    const resolveActor = (li: unknown): Actor | null => {
-      const el = li instanceof HTMLElement ? li : ((li as JQuery)?.[0] ?? null);
-      const id = el?.dataset.entryId ?? el?.dataset.documentId;
-      return id ? (game.actors?.get(id) ?? null) : null;
-    };
-    options.push({
-      name: 'Assign Voice',
-      icon: '<i class="fas fa-microphone-alt"></i>',
-      condition: (li: unknown) => !!resolveActor(li),
-      callback: (li: unknown) => {
-        const actor = resolveActor(li);
-        if (actor) openVoiceAssignDialogForActor(actor);
-      },
-    });
   });
   H.on('clientSettingChanged', (...args: unknown[]) => {
     const [namespace, key] = args as [string, string];

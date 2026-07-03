@@ -1226,6 +1226,51 @@ Hooks.once("init", () => {
   CONFIG.WebRTC.clientClass = ProximitySimplePeerAVClient;
   registerModuleKeybindings();
   registerVoiceTokenKeybinding();
+  const version = game.modules?.get(MODULE_ID)?.version ?? "?";
+  console.log(`[${MODULE_ID}] v${version} init`);
+});
+var HooksOn = Hooks;
+HooksOn.on("renderTokenHUD", (...args) => {
+  if (!game.user?.isGM) return;
+  const app = args[0];
+  const el = args[1];
+  const root = el instanceof HTMLElement ? el : el?.[0] ?? null;
+  const actor = app.object?.actor ?? app.document?.actor ?? null;
+  if (!root || !actor) return;
+  if (root.querySelector("[data-withinearshot-assign-voice]")) return;
+  const col = root.querySelector(".col.right") ?? root.querySelector(".col.left") ?? root;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "control-icon";
+  btn.setAttribute("data-withinearshot-assign-voice", "");
+  btn.title = "Assign Voice (Within Earshot)";
+  btn.innerHTML = '<i class="fas fa-microphone-alt"></i>';
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openVoiceAssignDialogForActor(actor);
+  });
+  col.appendChild(btn);
+});
+HooksOn.on("getActorContextOptions", (...args) => {
+  if (!game.user?.isGM) return;
+  const options = args[1];
+  const resolveActor = (li) => {
+    const raw = li instanceof HTMLElement ? li : li?.[0] ?? null;
+    const entry = raw?.closest?.("[data-entry-id], [data-document-id], [data-actor-id]") ?? raw;
+    const ds = entry?.dataset;
+    const id = ds?.entryId ?? ds?.documentId ?? ds?.actorId;
+    return id ? game.actors?.get(id) ?? null : null;
+  };
+  options.push({
+    name: "Assign Voice",
+    icon: '<i class="fas fa-microphone-alt"></i>',
+    condition: (li) => !!resolveActor(li),
+    callback: (li) => {
+      const actor = resolveActor(li);
+      if (actor) openVoiceAssignDialogForActor(actor);
+    }
+  });
 });
 Hooks.once("i18nInit", registerModuleSettings);
 Hooks.once("ready", async () => {
@@ -1295,46 +1340,6 @@ Hooks.once("ready", async () => {
         }
       }
     }
-  });
-  H.on("renderTokenHUD", (...args) => {
-    if (!game.user?.isGM) return;
-    const app = args[0];
-    const el = args[1];
-    const root = el instanceof HTMLElement ? el : el?.[0] ?? null;
-    const actor = app.object?.actor ?? null;
-    if (!root || !actor) return;
-    if (root.querySelector("[data-withinearshot-assign-voice]")) return;
-    const col = root.querySelector(".col.right") ?? root.querySelector(".col.left") ?? root;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "control-icon";
-    btn.setAttribute("data-withinearshot-assign-voice", "");
-    btn.title = "Assign Voice (Within Earshot)";
-    btn.innerHTML = '<i class="fas fa-microphone-alt"></i>';
-    btn.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      openVoiceAssignDialogForActor(actor);
-    });
-    col.appendChild(btn);
-  });
-  H.on("getActorContextOptions", (...args) => {
-    if (!game.user?.isGM) return;
-    const options = args[1];
-    const resolveActor = (li) => {
-      const el = li instanceof HTMLElement ? li : li?.[0] ?? null;
-      const id = el?.dataset.entryId ?? el?.dataset.documentId;
-      return id ? game.actors?.get(id) ?? null : null;
-    };
-    options.push({
-      name: "Assign Voice",
-      icon: '<i class="fas fa-microphone-alt"></i>',
-      condition: (li) => !!resolveActor(li),
-      callback: (li) => {
-        const actor = resolveActor(li);
-        if (actor) openVoiceAssignDialogForActor(actor);
-      }
-    });
   });
   H.on("clientSettingChanged", (...args) => {
     const [namespace, key] = args;
