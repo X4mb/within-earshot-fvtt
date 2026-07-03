@@ -5,18 +5,21 @@
  * Override destination: set FOUNDRY_MODULE_PATH to the full `withinearshot` folder
  * (e.g. `D:/FoundryVTT/Data/modules/withinearshot`).
  */
-import { cpSync, copyFileSync, mkdirSync, existsSync } from 'fs';
+import { cpSync, copyFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Folder must match module.json id (differs on the test branch: withinearshot-test). */
+const moduleId = JSON.parse(readFileSync(join(root, 'module.json'), 'utf8')).id;
 
 const dest =
   process.env.FOUNDRY_MODULE_PATH?.trim() ||
   (() => {
     const local = process.env.LOCALAPPDATA;
     if (!local) return null;
-    return join(local, 'FoundryVTT', 'Data', 'modules', 'withinearshot');
+    return join(local, 'FoundryVTT', 'Data', 'modules', moduleId);
   })();
 
 if (!dest) {

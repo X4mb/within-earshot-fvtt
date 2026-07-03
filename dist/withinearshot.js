@@ -1,5 +1,5 @@
 // src/constants.ts
-var MODULE_ID = "withinearshot";
+var MODULE_ID = "withinearshot-test";
 var FLAG_VOICE_TOKEN_ID = "voiceTokenId";
 var VOICE_INDICATOR_LAYER = "withinearshotVoiceIndicator";
 
