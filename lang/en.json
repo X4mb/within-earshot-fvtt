@@ -29,6 +29,15 @@
     "cannotPick": "You can only set your voice token to a token you own.",
     "cleared": "Voice position: automatic (assigned character token).",
     "set": "Voice position: speaking as {name}.",
-    "needSelection": "Select a token first (control it), then use the voice token keybinding."
+    "needSelection": "Select a token first (control it), then use the voice token keybinding.",
+    "assignVoice": "Assign Voice",
+    "presetNone": "None (passthrough)",
+    "presetDeep": "Deep",
+    "presetHigh": "High",
+    "presetRobot": "Robot",
+    "presetWhisper": "Whisper",
+    "presetCustom": "Custom",
+    "voiceChangerUnavailable": "Voice changer unavailable: {error}",
+    "cannotApplyProfile": "Could not apply voice profile: {error}"
   }
 }

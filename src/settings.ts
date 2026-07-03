@@ -96,15 +96,29 @@ export function registerModuleKeybindings(): void {
   });
 }
 
+/**
+ * All getters swallow "not a registered game setting" and return the default: they are called from
+ * the audio path (attachPeer → computeGainForSpeaker), where a throw detaches nothing and leaves the
+ * remote video element unmuted at full volume.
+ */
 export function getMaxRange(): number {
-  const v = s().get(MODULE_ID, SETTINGS.MAX_RANGE);
+  let v: unknown;
+  try {
+    v = s().get(MODULE_ID, SETTINGS.MAX_RANGE);
+  } catch {
+    return 15;
+  }
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n) || n <= 0) return 15;
   return Math.min(500, Math.max(1, n));
 }
 
 export function getGmVoiceGlobal(): boolean {
-  return s().get(MODULE_ID, SETTINGS.GM_VOICE_GLOBAL) as boolean;
+  try {
+    return Boolean(s().get(MODULE_ID, SETTINGS.GM_VOICE_GLOBAL));
+  } catch {
+    return false;
+  }
 }
 
 export function setGmVoiceGlobal(v: boolean): Promise<unknown> {
@@ -112,7 +126,12 @@ export function setGmVoiceGlobal(v: boolean): Promise<unknown> {
 }
 
 export function getThroughWallGain(): number {
-  const v = s().get(MODULE_ID, SETTINGS.THROUGH_WALL_GAIN);
+  let v: unknown;
+  try {
+    v = s().get(MODULE_ID, SETTINGS.THROUGH_WALL_GAIN);
+  } catch {
+    return 0.05;
+  }
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n)) return 0.05;
   return Math.min(1, Math.max(0.05, n));

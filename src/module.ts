@@ -6,7 +6,7 @@ import {
 } from './avSessionLog.js';
 import { ProximitySimplePeerAVClient } from './ProximitySimplePeerAVClient.js';
 import { proximityRouter, scheduleProximityRefresh } from './proximityAudioRouter.js';
-import { clearVoiceTokenFlagForCurrentUser } from './voiceToken.js';
+import { clearVoiceTokenFlagForCurrentUser, getVoiceTokenIdFromUser } from './voiceToken.js';
 import {
   getGmVoiceGlobal,
   registerModuleKeybindings,
@@ -22,6 +22,8 @@ import {
   redrawVoiceIndicator,
   scheduleVoiceIndicatorRedraw,
 } from './voiceIndicatorLayer.js';
+import { voiceChangerProcessor } from './voiceChangerProcessor.js';
+import { openVoiceAssignDialogForActor } from './voiceAssignDialog.js';
 
 const BaseClient = foundry.av.clients.SimplePeerAVClient;
 
@@ -56,8 +58,15 @@ Hooks.once('init', () => {
   registerVoiceTokenKeybinding();
 });
 
+/**
+ * Settings must exist before setupGame → initializeRTC wires the first peer (which reads them via
+ * computeGainForSpeaker). `ready` fires after initializeRTC, so registering there threw
+ * "not a registered game setting" on fast-connecting clients. i18nInit fires after translations
+ * load and before setup/RTC.
+ */
+Hooks.once('i18nInit', registerModuleSettings);
+
 Hooks.once('ready', async () => {
-  registerModuleSettings();
   await clearVoiceTokenFlagForCurrentUser();
 
   const H = Hooks as unknown as { on(hook: string, fn: (...args: unknown[]) => void): number };
@@ -118,7 +127,37 @@ Hooks.once('ready', async () => {
         proximityRouter.updateProfileGainForUser(uid);
         scheduleProximityRefresh();
       }
+      if (game.user?.isGM && voiceChangerProcessor.isInitialized()) {
+        const pinnedId = getVoiceTokenIdFromUser(game.user);
+        if (pinnedId && canvas?.scene?.tokens.get(pinnedId)?.actor?.id === doc.id) {
+          void voiceChangerProcessor.applyProfile(getVoiceProfileForActor(doc));
+        }
+      }
     }
+  });
+  H.on('getTokenContextMenuOptions', (...args: unknown[]) => {
+    if (!game.user?.isGM) return;
+    const options = args[1] as Array<{
+      name: string;
+      icon: string;
+      condition?: () => boolean;
+      callback: (li: JQuery) => void;
+    }>;
+    options.push({
+      name: 'Assign Voice',
+      icon: '<i class="fas fa-microphone-alt"></i>',
+      condition: () => !!game.user?.isGM,
+      callback: (li: JQuery) => {
+        const tokenId = li.data('tokenId') as string | undefined;
+        const token = tokenId ? (canvas?.tokens?.get(tokenId) ?? null) : null;
+        const actor = token?.actor ?? null;
+        if (!actor) {
+          ui.notifications?.warn('Within Earshot: this token has no actor to assign a voice to.');
+          return;
+        }
+        openVoiceAssignDialogForActor(actor);
+      },
+    });
   });
   H.on('clientSettingChanged', (...args: unknown[]) => {
     const [namespace, key] = args as [string, string];

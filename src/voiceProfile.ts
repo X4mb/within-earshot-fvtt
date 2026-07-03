@@ -1,11 +1,13 @@
 import { MODULE_ID } from './constants.js';
 
-/**
- * Per-actor voice settings (Phase 2). `gainMultiplier` is applied before proximity attenuation.
- * Extend this object and the audio router when adding filters / pitch.
- */
+export type VoicePreset = 'none' | 'deep' | 'high' | 'robot' | 'whisper' | 'custom';
+
 export interface VoiceProfile {
   gainMultiplier?: number;
+  preset?: VoicePreset;
+  pitchShift?: number;
+  eqLowGain?: number;
+  eqHighGain?: number;
 }
 
 export function getVoiceProfileForActor(actor: Actor | null | undefined): VoiceProfile | null {

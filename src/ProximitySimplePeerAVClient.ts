@@ -1,4 +1,7 @@
 import { proximityRouter, scheduleProximityRefresh } from './proximityAudioRouter.js';
+import { voiceChangerProcessor } from './voiceChangerProcessor.js';
+import { getVoiceProfileForActor } from './voiceProfile.js';
+import { getVoiceTokenIdFromUser } from './voiceToken.js';
 
 const Base = foundry.av.clients.SimplePeerAVClient;
 
@@ -15,6 +18,42 @@ const WIRE_MAX_ATTEMPTS = 30;
 export class ProximitySimplePeerAVClient extends Base {
   /** Pending video elements awaiting Web Audio wiring before being muted. */
   readonly #videoElements = new Map<string, HTMLVideoElement>();
+
+  /**
+   * SimplePeerAVClient has no `getUserMedia` — this is the real mic acquisition point, called by
+   * both `connect` and `updateLocalStream` (device switch). The processed track is swapped into
+   * the stream **in place**: `connectPeer` / `updateLocalStream` ship `this.localStream` after this
+   * returns, and `levelsStream` (VU meter / voice activation) was already cloned from the raw mic.
+   */
+  override async initializeLocalStream(): Promise<MediaStream | null> {
+    const stream = await super.initializeLocalStream();
+    if (!game.user?.isGM || !stream) return stream;
+    const rawTrack = stream.getAudioTracks()[0];
+    // Guard against double-processing when a caller chains back into this method.
+    if (!rawTrack || voiceChangerProcessor.ownsTrack(rawTrack)) return stream;
+    try {
+      // Fresh graph per acquisition so a device switch re-wires from the new mic.
+      await voiceChangerProcessor.initialize(new MediaStream([rawTrack]));
+      const processedTrack = voiceChangerProcessor.getProcessedStream()?.getAudioTracks()[0];
+      if (processedTrack) {
+        stream.removeTrack(rawTrack);
+        stream.addTrack(processedTrack);
+        await this.#applyPinnedVoiceProfile();
+      }
+    } catch (err) {
+      ui.notifications?.warn(`Within Earshot: voice changer unavailable — ${String(err)}`);
+    }
+    return stream;
+  }
+
+  /** Re-apply the profile of the GM's pinned voice token after the graph is (re)built. */
+  async #applyPinnedVoiceProfile(): Promise<void> {
+    const user = game.user;
+    if (!user) return;
+    const pinnedId = getVoiceTokenIdFromUser(user);
+    const actor = pinnedId ? (canvas?.scene?.tokens.get(pinnedId)?.actor ?? null) : null;
+    await voiceChangerProcessor.applyProfile(actor ? getVoiceProfileForActor(actor) : null);
+  }
 
   override async initializePeerStream(userId: string): Promise<SimplePeer.Instance> {
     const inst = await super.initializePeerStream(userId);
@@ -37,6 +76,7 @@ export class ProximitySimplePeerAVClient extends Base {
   override async disconnect(): Promise<boolean> {
     this.#videoElements.clear();
     proximityRouter.detachAll();
+    voiceChangerProcessor.reset();
     return super.disconnect();
   }
 

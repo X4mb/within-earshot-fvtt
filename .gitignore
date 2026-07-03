@@ -6,3 +6,6 @@ node_modules/
 
 # Packaged module zips (do not commit)
 *.zip
+
+# Local third-party voice-changer app used for experiments (binaries, not module source)
+voicechanger/

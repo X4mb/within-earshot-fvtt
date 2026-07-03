@@ -212,19 +212,33 @@ function registerModuleKeybindings() {
   });
 }
 function getMaxRange() {
-  const v = s().get(MODULE_ID, SETTINGS.MAX_RANGE);
+  let v;
+  try {
+    v = s().get(MODULE_ID, SETTINGS.MAX_RANGE);
+  } catch {
+    return 15;
+  }
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n) || n <= 0) return 15;
   return Math.min(500, Math.max(1, n));
 }
 function getGmVoiceGlobal() {
-  return s().get(MODULE_ID, SETTINGS.GM_VOICE_GLOBAL);
+  try {
+    return Boolean(s().get(MODULE_ID, SETTINGS.GM_VOICE_GLOBAL));
+  } catch {
+    return false;
+  }
 }
 function setGmVoiceGlobal(v) {
   return s().set(MODULE_ID, SETTINGS.GM_VOICE_GLOBAL, v);
 }
 function getThroughWallGain() {
-  const v = s().get(MODULE_ID, SETTINGS.THROUGH_WALL_GAIN);
+  let v;
+  try {
+    v = s().get(MODULE_ID, SETTINGS.THROUGH_WALL_GAIN);
+  } catch {
+    return 0.05;
+  }
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return 0.05;
   return Math.min(1, Math.max(0.05, n));
@@ -305,6 +319,321 @@ function getVoiceLosMultiplier(listenerToken, speakerDoc) {
   }
 }
 
+// src/pitchShiftWorklet.ts
+var PITCH_SHIFT_WORKLET_CODE = `
+class PitchShiftProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [{
+      name: 'pitchFactor',
+      defaultValue: 1.0,
+      minValue: 0.25,
+      maxValue: 4.0,
+      automationRate: 'k-rate'
+    }];
+  }
+
+  constructor() {
+    super();
+    this._bufSize = 8192;              // power of two; must exceed grain + 2
+    this._buf = new Float32Array(this._bufSize);
+    this._writePos = 0;
+    this._win = 2048;                  // grain length (~43ms @ 48kHz, ~21ms avg latency)
+    this._phase = 0;                   // grain phase in [0, 1)
+  }
+
+  _read(delay) {
+    const mask = this._bufSize - 1;
+    const pos = this._writePos - delay;
+    const base = Math.floor(pos);
+    const frac = pos - base;
+    const s0 = this._buf[base & mask];
+    const s1 = this._buf[(base + 1) & mask];
+    return s0 + frac * (s1 - s0);
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0]?.[0];
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+
+    const factor = parameters.pitchFactor[0] ?? 1.0;
+    const mask = this._bufSize - 1;
+    const win = this._win;
+    // delay(t) slope = 1 - factor, so read position advances at exactly \`factor\` per sample.
+    const dPhase = (1 - factor) / win;
+
+    for (let i = 0; i < output.length; i++) {
+      this._buf[this._writePos & mask] = input ? input[i] : 0;
+      this._writePos++;
+
+      let p = this._phase + dPhase;
+      p -= Math.floor(p);               // wrap into [0, 1) for either sweep direction
+      this._phase = p;
+      const p2 = p + 0.5 - Math.floor(p + 0.5);
+
+      // delay in [1, win + 1]: always behind the write head, never past the buffer.
+      const g1 = Math.sin(Math.PI * p);
+      const g2 = Math.sin(Math.PI * p2);
+      output[i] = g1 * this._read(1 + p * win) + g2 * this._read(1 + p2 * win);
+    }
+
+    return true;
+  }
+}
+
+registerProcessor('withinearshot-pitch-shift', PitchShiftProcessor);
+`;
+
+// src/voiceChangerProcessor.ts
+var VoiceChangerProcessor = class {
+  ctx = null;
+  sourceNode = null;
+  destNode = null;
+  processedStream = null;
+  chain = null;
+  state = "uninitialized";
+  workletReady = false;
+  workletFailed = false;
+  pendingProfile = null;
+  workletBlobUrl = null;
+  isInitialized() {
+    return this.state === "ready";
+  }
+  getProcessedStream() {
+    return this.processedStream;
+  }
+  /** True when the track is this processor's output (lets callers avoid re-processing it). */
+  ownsTrack(track) {
+    return this.processedStream?.getAudioTracks().includes(track) ?? false;
+  }
+  async initialize(micStream) {
+    if (this.state === "initializing") return;
+    if (this.state !== "uninitialized") this.reset();
+    this.state = "initializing";
+    try {
+      this.ctx = new AudioContext({ sampleRate: 48e3 });
+      this.resumeWhenAllowed();
+      this.sourceNode = this.ctx.createMediaStreamSource(micStream);
+      this.destNode = this.ctx.createMediaStreamDestination();
+      this.processedStream = this.destNode.stream;
+      await this.ensureWorklet();
+      await this.buildChain(this.pendingProfile ?? { preset: "none" });
+      this.pendingProfile = null;
+      this.state = "ready";
+      pushAvSessionLog("voiceChanger:initialized", {});
+    } catch (err) {
+      this.state = "uninitialized";
+      throw err;
+    }
+  }
+  async applyProfile(profile) {
+    if (this.state === "disposed") return;
+    if (this.state !== "ready") {
+      this.pendingProfile = profile;
+      return;
+    }
+    await this.buildChain(profile ?? { preset: "none" });
+    pushAvSessionLog("voiceChanger:applyProfile", { preset: profile?.preset ?? "none" });
+  }
+  dispose() {
+    if (this.state === "disposed") return;
+    this.tearDownChain();
+    try {
+      this.sourceNode?.disconnect();
+    } catch {
+    }
+    try {
+      this.ctx?.close();
+    } catch {
+    }
+    if (this.workletBlobUrl) {
+      URL.revokeObjectURL(this.workletBlobUrl);
+      this.workletBlobUrl = null;
+    }
+    this.ctx = null;
+    this.sourceNode = null;
+    this.destNode = null;
+    this.processedStream = null;
+    this.chain = null;
+    this.state = "disposed";
+    this.workletReady = false;
+    this.workletFailed = false;
+    this.pendingProfile = null;
+    pushAvSessionLog("voiceChanger:disposed", {});
+  }
+  reset() {
+    this.dispose();
+    this.state = "uninitialized";
+  }
+  /**
+   * Never `await ctx.resume()` here: under autoplay policy the promise can stay pending until a
+   * user gesture, which would stall the whole A/V connect inside initializeLocalStream.
+   */
+  resumeWhenAllowed() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "suspended") return;
+    void ctx.resume().catch(() => {
+    });
+    window.addEventListener(
+      "pointerdown",
+      () => {
+        if (this.ctx?.state === "suspended") void this.ctx.resume().catch(() => {
+        });
+      },
+      { once: true }
+    );
+  }
+  async ensureWorklet() {
+    if (this.workletReady || this.workletFailed || !this.ctx) return;
+    try {
+      const blob = new Blob([PITCH_SHIFT_WORKLET_CODE], { type: "application/javascript" });
+      this.workletBlobUrl = URL.createObjectURL(blob);
+      await this.ctx.audioWorklet.addModule(this.workletBlobUrl);
+      this.workletReady = true;
+    } catch (err) {
+      console.warn("[withinearshot] Pitch shift worklet unavailable (CSP or browser issue). EQ-only mode active.", err);
+      this.workletFailed = true;
+    }
+  }
+  async buildChain(profile) {
+    if (!this.ctx || !this.sourceNode || !this.destNode) return;
+    this.tearDownChain();
+    const ctx = this.ctx;
+    const preset = profile.preset ?? "none";
+    const outputGain = ctx.createGain();
+    outputGain.connect(this.destNode);
+    const filters = [];
+    let workletNode = null;
+    let ringOsc = null;
+    const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : 0;
+    const pitchShift = profile.pitchShift || presetDefaultShift;
+    const pitchFactor = Math.pow(2, pitchShift / 12);
+    let head = this.sourceNode;
+    if (preset === "none") {
+      head.connect(outputGain);
+      outputGain.gain.value = 1;
+      this.chain = { workletNode: null, filters, ringOsc: null, outputGain };
+      return;
+    }
+    const wantPitch = (preset === "deep" || preset === "high" || preset === "custom") && Math.abs(pitchFactor - 1) > 1e-3 && this.workletReady;
+    if (wantPitch && !this.workletFailed) {
+      workletNode = new AudioWorkletNode(ctx, "withinearshot-pitch-shift", {
+        parameterData: { pitchFactor }
+      });
+      head.connect(workletNode);
+      head = workletNode;
+      filters.push(workletNode);
+    }
+    if (preset === "deep") {
+      const low = ctx.createBiquadFilter();
+      low.type = "lowshelf";
+      low.frequency.value = 200;
+      low.gain.value = 3;
+      const high = ctx.createBiquadFilter();
+      high.type = "highshelf";
+      high.frequency.value = 6e3;
+      high.gain.value = -4;
+      head.connect(low);
+      low.connect(high);
+      high.connect(outputGain);
+      filters.push(low, high);
+      outputGain.gain.value = 1;
+    } else if (preset === "high") {
+      const low = ctx.createBiquadFilter();
+      low.type = "lowshelf";
+      low.frequency.value = 300;
+      low.gain.value = -3;
+      const high = ctx.createBiquadFilter();
+      high.type = "highshelf";
+      high.frequency.value = 3e3;
+      high.gain.value = 3;
+      head.connect(low);
+      low.connect(high);
+      high.connect(outputGain);
+      filters.push(low, high);
+      outputGain.gain.value = 1;
+    } else if (preset === "robot") {
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 1e3;
+      bp.Q.value = 0.8;
+      const ringGain = ctx.createGain();
+      ringGain.gain.value = 0;
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = 60;
+      osc.connect(ringGain.gain);
+      osc.start();
+      ringOsc = osc;
+      head.connect(bp);
+      bp.connect(ringGain);
+      ringGain.connect(outputGain);
+      filters.push(bp, ringGain);
+      outputGain.gain.value = 0.8;
+    } else if (preset === "whisper") {
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 4e3;
+      const mid = ctx.createBiquadFilter();
+      mid.type = "peaking";
+      mid.frequency.value = 800;
+      mid.gain.value = -6;
+      head.connect(lp);
+      lp.connect(mid);
+      mid.connect(outputGain);
+      filters.push(lp, mid);
+      outputGain.gain.value = 0.35;
+    } else {
+      const low = ctx.createBiquadFilter();
+      low.type = "lowshelf";
+      low.frequency.value = 200;
+      low.gain.value = profile.eqLowGain ?? 0;
+      const high = ctx.createBiquadFilter();
+      high.type = "highshelf";
+      high.frequency.value = 6e3;
+      high.gain.value = profile.eqHighGain ?? 0;
+      head.connect(low);
+      low.connect(high);
+      high.connect(outputGain);
+      filters.push(low, high);
+      outputGain.gain.value = 1;
+    }
+    this.chain = { workletNode, filters, ringOsc, outputGain };
+  }
+  tearDownChain() {
+    if (!this.chain) return;
+    const { workletNode, filters, ringOsc, outputGain } = this.chain;
+    try {
+      ringOsc?.stop();
+    } catch {
+    }
+    try {
+      ringOsc?.disconnect();
+    } catch {
+    }
+    for (const node of filters) {
+      try {
+        node.disconnect();
+      } catch {
+      }
+    }
+    try {
+      workletNode?.disconnect();
+    } catch {
+    }
+    try {
+      outputGain.disconnect();
+    } catch {
+    }
+    try {
+      this.sourceNode?.disconnect();
+    } catch {
+    }
+    this.chain = null;
+  }
+};
+var voiceChangerProcessor = new VoiceChangerProcessor();
+
 // src/voiceToken.ts
 function canUserPickVoiceToken(user, token) {
   if (user.isGM) return true;
@@ -374,6 +703,13 @@ async function toggleVoiceTokenForCurrentUser(token) {
     const msg2 = err instanceof Error ? err.message : String(err);
     ui.notifications?.error(`Within Earshot: could not save voice token (${msg2})`);
     return;
+  }
+  if (game.user?.isGM) {
+    const actor = next !== null ? token.actor : null;
+    const profile = actor ? getVoiceProfileForActor(actor) : null;
+    void voiceChangerProcessor.applyProfile(profile).catch((err) => {
+      ui.notifications?.warn(`Within Earshot: could not apply voice profile \u2014 ${String(err)}`);
+    });
   }
   const name = token.name ?? token.document.name;
   const msg = next === null ? loc(`${MODULE_ID}.VOICE.cleared`, "Voice position: automatic (assigned character token).") : loc(`${MODULE_ID}.VOICE.set`, "Voice position: speaking as {name}.").replace("{name}", name);
@@ -573,6 +909,38 @@ var WIRE_MAX_ATTEMPTS = 30;
 var ProximitySimplePeerAVClient = class extends Base {
   /** Pending video elements awaiting Web Audio wiring before being muted. */
   #videoElements = /* @__PURE__ */ new Map();
+  /**
+   * SimplePeerAVClient has no `getUserMedia` — this is the real mic acquisition point, called by
+   * both `connect` and `updateLocalStream` (device switch). The processed track is swapped into
+   * the stream **in place**: `connectPeer` / `updateLocalStream` ship `this.localStream` after this
+   * returns, and `levelsStream` (VU meter / voice activation) was already cloned from the raw mic.
+   */
+  async initializeLocalStream() {
+    const stream = await super.initializeLocalStream();
+    if (!game.user?.isGM || !stream) return stream;
+    const rawTrack = stream.getAudioTracks()[0];
+    if (!rawTrack || voiceChangerProcessor.ownsTrack(rawTrack)) return stream;
+    try {
+      await voiceChangerProcessor.initialize(new MediaStream([rawTrack]));
+      const processedTrack = voiceChangerProcessor.getProcessedStream()?.getAudioTracks()[0];
+      if (processedTrack) {
+        stream.removeTrack(rawTrack);
+        stream.addTrack(processedTrack);
+        await this.#applyPinnedVoiceProfile();
+      }
+    } catch (err) {
+      ui.notifications?.warn(`Within Earshot: voice changer unavailable \u2014 ${String(err)}`);
+    }
+    return stream;
+  }
+  /** Re-apply the profile of the GM's pinned voice token after the graph is (re)built. */
+  async #applyPinnedVoiceProfile() {
+    const user = game.user;
+    if (!user) return;
+    const pinnedId = getVoiceTokenIdFromUser(user);
+    const actor = pinnedId ? canvas?.scene?.tokens.get(pinnedId)?.actor ?? null : null;
+    await voiceChangerProcessor.applyProfile(actor ? getVoiceProfileForActor(actor) : null);
+  }
   async initializePeerStream(userId) {
     const inst = await super.initializePeerStream(userId);
     void this.#wirePeerWhenReady(userId);
@@ -591,6 +959,7 @@ var ProximitySimplePeerAVClient = class extends Base {
   async disconnect() {
     this.#videoElements.clear();
     proximityRouter.detachAll();
+    voiceChangerProcessor.reset();
     return super.disconnect();
   }
   async setUserVideo(userId, videoElement) {
@@ -670,23 +1039,22 @@ function redrawVoiceIndicator() {
   if (!token) return;
   positionOnTokenLayer(tokenLayer, g, token);
   const cellPx = canvas.dimensions?.size ?? 100;
-  const rx = token.document.width * cellPx / 2 * 0.92;
-  const ry = token.document.height * cellPx / 2 * 0.92;
-  const lw = Math.max(4, cellPx * 0.12);
+  const dotR = Math.max(5, cellPx * 0.08);
+  const tw = token.document.width * cellPx;
+  const th = token.document.height * cellPx;
+  const dx = tw - dotR * 0.6;
+  const dy = th - dotR * 0.6;
   const gfx = g;
-  if (typeof gfx.ellipse === "function" && typeof gfx.stroke === "function") {
+  if (typeof gfx.circle === "function" && typeof gfx.fill === "function") {
     const v8 = gfx;
-    v8.ellipse(0, 0, rx, ry);
-    v8.stroke({ width: lw, color: 3407820, alpha: 1 });
-  } else if (typeof gfx.lineStyle === "function" && typeof gfx.drawEllipse === "function") {
-    const leg = gfx;
-    leg.lineStyle(lw, 3407820, 1);
-    leg.drawEllipse(0, 0, rx, ry);
+    v8.circle(dx, dy, dotR);
+    v8.fill({ color: 3407820, alpha: 1 });
   } else {
-    const anyG = gfx;
-    if (typeof anyG.lineStyle === "function" && typeof anyG.drawCircle === "function") {
-      anyG.lineStyle(lw, 3407820, 1);
-      anyG.drawCircle(0, 0, Math.max(rx, ry));
+    const leg = gfx;
+    if (typeof leg.beginFill === "function" && typeof leg.drawCircle === "function") {
+      leg.beginFill(3407820, 1);
+      leg.drawCircle(dx, dy, dotR);
+      leg.endFill?.();
     }
   }
 }
@@ -737,6 +1105,103 @@ function registerVoiceTokenKeybinding() {
   });
 }
 
+// src/voiceAssignDialog.ts
+var PRESETS = [
+  { value: "none", label: "None (passthrough)" },
+  { value: "deep", label: "Deep" },
+  { value: "high", label: "High" },
+  { value: "robot", label: "Robot" },
+  { value: "whisper", label: "Whisper" },
+  { value: "custom", label: "Custom" }
+];
+function openVoiceAssignDialogForActor(actor) {
+  const profile = getVoiceProfileForActor(actor) ?? {};
+  const currentPreset = profile.preset ?? "none";
+  const pitchShift = profile.pitchShift ?? 0;
+  const eqLowGain = profile.eqLowGain ?? 0;
+  const eqHighGain = profile.eqHighGain ?? 0;
+  const actorId = actor.id;
+  const actorName = actor.name;
+  const presetOptions = PRESETS.map(
+    (p) => `<option value="${p.value}"${p.value === currentPreset ? " selected" : ""}>${p.label}</option>`
+  ).join("");
+  const content = `
+    <form>
+      <input type="hidden" name="actorId" value="${actorId}">
+      <div class="form-group">
+        <label><b>Voice Preset</b></label>
+        <select name="preset" style="width:100%">${presetOptions}</select>
+      </div>
+      <div class="form-group" style="margin-top:8px">
+        <label>Pitch shift (semitones): <span id="wea-pitch-val">${pitchShift}</span></label>
+        <input type="range" name="pitchShift" min="-12" max="12" step="0.5"
+               value="${pitchShift}" style="width:100%">
+      </div>
+      <div class="form-group" style="margin-top:8px">
+        <label>Low shelf gain (dB): <span id="wea-low-val">${eqLowGain}</span></label>
+        <input type="range" name="eqLowGain" min="-18" max="18" step="1"
+               value="${eqLowGain}" style="width:100%">
+      </div>
+      <div class="form-group" style="margin-top:8px">
+        <label>High shelf gain (dB): <span id="wea-high-val">${eqHighGain}</span></label>
+        <input type="range" name="eqHighGain" min="-18" max="18" step="1"
+               value="${eqHighGain}" style="width:100%">
+      </div>
+    </form>`;
+  const D = Dialog;
+  new D({
+    title: `Assign Voice: ${actorName}`,
+    content,
+    default: "save",
+    render: (html) => {
+      html.find("input[name=pitchShift]").on("input", function() {
+        html.find("#wea-pitch-val").text(this.value);
+      });
+      html.find("input[name=eqLowGain]").on("input", function() {
+        html.find("#wea-low-val").text(this.value);
+      });
+      html.find("input[name=eqHighGain]").on("input", function() {
+        html.find("#wea-high-val").text(this.value);
+      });
+    },
+    buttons: {
+      save: {
+        icon: '<i class="fas fa-save"></i>',
+        label: "Save",
+        callback: async (html) => {
+          const form = html.find("form")[0];
+          const fd = new FormData(form);
+          const targetActorId = fd.get("actorId");
+          const targetActor = targetActorId ? game.actors?.get(targetActorId) : null;
+          if (!targetActor) return;
+          const newProfile = {
+            ...getVoiceProfileForActor(targetActor) ?? {},
+            preset: fd.get("preset") ?? "none",
+            pitchShift: parseFloat(fd.get("pitchShift")) || 0,
+            eqLowGain: parseFloat(fd.get("eqLowGain")) || 0,
+            eqHighGain: parseFloat(fd.get("eqHighGain")) || 0
+          };
+          await persistVoiceProfileFlag(targetActor, newProfile);
+          if (game.user?.isGM && voiceChangerProcessor.isInitialized()) {
+            const pinnedId = getVoiceTokenIdFromUser(game.user);
+            if (pinnedId) {
+              const pinnedDoc = canvas?.scene?.tokens.get(pinnedId);
+              if (pinnedDoc?.actor?.id === targetActor.id) {
+                void voiceChangerProcessor.applyProfile(newProfile).catch((err) => {
+                  ui.notifications?.warn(
+                    `Within Earshot: could not apply voice \u2014 ${String(err)}`
+                  );
+                });
+              }
+            }
+          }
+        }
+      },
+      cancel: { label: "Cancel" }
+    }
+  }).render(true);
+}
+
 // src/module.ts
 var BaseClient = foundry.av.clients.SimplePeerAVClient;
 var canvasPositionTicker;
@@ -762,8 +1227,8 @@ Hooks.once("init", () => {
   registerModuleKeybindings();
   registerVoiceTokenKeybinding();
 });
+Hooks.once("i18nInit", registerModuleSettings);
 Hooks.once("ready", async () => {
-  registerModuleSettings();
   await clearVoiceTokenFlagForCurrentUser();
   const H = Hooks;
   H.on("controlObject", () => {
@@ -823,7 +1288,32 @@ Hooks.once("ready", async () => {
         proximityRouter.updateProfileGainForUser(uid);
         scheduleProximityRefresh();
       }
+      if (game.user?.isGM && voiceChangerProcessor.isInitialized()) {
+        const pinnedId = getVoiceTokenIdFromUser(game.user);
+        if (pinnedId && canvas?.scene?.tokens.get(pinnedId)?.actor?.id === doc.id) {
+          void voiceChangerProcessor.applyProfile(getVoiceProfileForActor(doc));
+        }
+      }
     }
+  });
+  H.on("getTokenContextMenuOptions", (...args) => {
+    if (!game.user?.isGM) return;
+    const options = args[1];
+    options.push({
+      name: "Assign Voice",
+      icon: '<i class="fas fa-microphone-alt"></i>',
+      condition: () => !!game.user?.isGM,
+      callback: (li) => {
+        const tokenId = li.data("tokenId");
+        const token = tokenId ? canvas?.tokens?.get(tokenId) ?? null : null;
+        const actor = token?.actor ?? null;
+        if (!actor) {
+          ui.notifications?.warn("Within Earshot: this token has no actor to assign a voice to.");
+          return;
+        }
+        openVoiceAssignDialogForActor(actor);
+      }
+    });
   });
   H.on("clientSettingChanged", (...args) => {
     const [namespace, key] = args;

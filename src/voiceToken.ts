@@ -1,5 +1,7 @@
 import { FLAG_VOICE_TOKEN_ID, MODULE_ID } from './constants.js';
 import { loc } from './settings.js';
+import { voiceChangerProcessor } from './voiceChangerProcessor.js';
+import { getVoiceProfileForActor } from './voiceProfile.js';
 
 export function canUserPickVoiceToken(user: User, token: Token): boolean {
   if (user.isGM) return true;
@@ -95,6 +97,14 @@ export async function toggleVoiceTokenForCurrentUser(token: Token): Promise<void
     ui.notifications?.error(`Within Earshot: could not save voice token (${msg})`);
     return;
   }
+  if (game.user?.isGM) {
+    const actor = next !== null ? token.actor : null;
+    const profile = actor ? getVoiceProfileForActor(actor) : null;
+    void voiceChangerProcessor.applyProfile(profile).catch((err: unknown) => {
+      ui.notifications?.warn(`Within Earshot: could not apply voice profile — ${String(err)}`);
+    });
+  }
+
   const name = token.name ?? token.document.name;
   const msg =
     next === null
