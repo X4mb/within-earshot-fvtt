@@ -135,29 +135,33 @@ Hooks.once('ready', async () => {
       }
     }
   });
-  H.on('getTokenContextMenuOptions', (...args: unknown[]) => {
+  /**
+   * Core has no canvas-token context menu (right-click opens the Token HUD), so the HUD is the
+   * GM entry point: microphone button in the right column → Assign Voice dialog.
+   */
+  H.on('renderTokenHUD', (...args: unknown[]) => {
     if (!game.user?.isGM) return;
-    const options = args[1] as Array<{
-      name: string;
-      icon: string;
-      condition?: () => boolean;
-      callback: (li: JQuery) => void;
-    }>;
-    options.push({
-      name: 'Assign Voice',
-      icon: '<i class="fas fa-microphone-alt"></i>',
-      condition: () => !!game.user?.isGM,
-      callback: (li: JQuery) => {
-        const tokenId = li.data('tokenId') as string | undefined;
-        const token = tokenId ? (canvas?.tokens?.get(tokenId) ?? null) : null;
-        const actor = token?.actor ?? null;
-        if (!actor) {
-          ui.notifications?.warn('Within Earshot: this token has no actor to assign a voice to.');
-          return;
-        }
-        openVoiceAssignDialogForActor(actor);
-      },
+    const app = args[0] as { object?: Token | null };
+    const el = args[1];
+    // v13+ passes an HTMLElement; older versions pass jQuery.
+    const root = el instanceof HTMLElement ? el : ((el as JQuery)?.[0] ?? null);
+    const actor = app.object?.actor ?? null;
+    if (!root || !actor) return;
+    if (root.querySelector('[data-withinearshot-assign-voice]')) return;
+    const col = root.querySelector('.col.right');
+    if (!col) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'control-icon';
+    btn.setAttribute('data-withinearshot-assign-voice', '');
+    btn.title = 'Assign Voice (Within Earshot)';
+    btn.innerHTML = '<i class="fas fa-microphone-alt"></i>';
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openVoiceAssignDialogForActor(actor);
     });
+    col.appendChild(btn);
   });
   H.on('clientSettingChanged', (...args: unknown[]) => {
     const [namespace, key] = args as [string, string];
@@ -188,6 +192,7 @@ Hooks.once('ready', async () => {
     (mod as { api?: Record<string, unknown> }).api = {
       getVoiceProfileForActor,
       setVoiceProfileForActor,
+      openVoiceAssignDialogForActor,
       scheduleProximityRefresh,
       getAvSessionLog: getAvSessionLogSnapshot,
       clearAvSessionLog,
