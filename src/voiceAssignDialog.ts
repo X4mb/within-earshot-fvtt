@@ -33,11 +33,13 @@ const PRESET_RECIPES: Record<VoicePreset, SliderValues | null> = {
   none:    { ...SLIDER_DEFAULTS },
   deep:    { pitchShift: -4, eqLowGain: 6,  eqHighGain: -4, distortion: 0,  echo: 0 },
   high:    { pitchShift: 4,  eqLowGain: -4, eqHighGain: 4,  distortion: 0,  echo: 0 },
-  // M→F: raise pitch into the female median range; cut chest resonance hard (a pitched-up voice
-  // with male chest weight reads as "small man", not as female); brighten for head-voice timbre.
-  feminine: { pitchShift: 4.5, eqLowGain: -8, eqHighGain: 5, distortion: 0, echo: 0 },
-  // F→M: mirror — lower pitch, rebuild chest weight, darken the top end.
-  masculine: { pitchShift: -4.5, eqLowGain: 7, eqHighGain: -4, distortion: 0, echo: 0 },
+  // M→F: our granular shifter moves formants along with pitch, so a big shift turns chipmunk
+  // fast — stay moderate on pitch (+3.5) and let EQ carry the rest: cut chest resonance hard
+  // (a pitched-up voice with male chest weight reads as "small man", not female) and brighten
+  // for head-voice timbre. Pitch MUST then be tuned to the speaker's base voice (see note).
+  feminine: { pitchShift: 3.5, eqLowGain: -9, eqHighGain: 6, distortion: 0, echo: 0 },
+  // F→M: mirror — lower pitch moderately, rebuild chest weight, darken the top end.
+  masculine: { pitchShift: -3.5, eqLowGain: 7, eqHighGain: -4, distortion: 0, echo: 0 },
   robot:   { pitchShift: 0,  eqLowGain: 0,  eqHighGain: 2,  distortion: 15, echo: 0 },
   whisper: { pitchShift: 0,  eqLowGain: 0,  eqHighGain: 3,  distortion: 0,  echo: 0 },
   custom:  null,
@@ -89,6 +91,10 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
         <label><b>Voice Preset</b></label>
         <select name="preset" style="width:100%">${presetOptions}</select>
         <p class="notes" style="margin:2px 0 0">Presets load starting values into the sliders — tweak from there.</p>
+        <p class="notes" id="wea-preset-note" style="display:none; margin:2px 0 0"><b>Tune the pitch to the speaker:</b>
+          the right shift depends on how low or high the base voice is. A deep voice needs more
+          (up to ±5), a lighter voice less (±2–3). Go in 0.5 steps until it stops sounding
+          artificial, then adjust Bass/Treble.</p>
       </div>
       ${slider('pitchShift', 'Pitch shift (semitones)', 'wea-pitch-val', -12, 12, 0.5, pitchShift)}
       ${slider('eqLowGain', 'Bass (dB)', 'wea-low-val', -18, 18, 1, eqLowGain)}
@@ -168,6 +174,13 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
       };
       html.find('input[type=range]').on('input change', applyLive);
 
+      const updatePresetNote = (preset: VoicePreset): void => {
+        const note = html.find('#wea-preset-note');
+        if (preset === 'feminine' || preset === 'masculine') note.show();
+        else note.hide();
+      };
+      updatePresetNote(currentPreset);
+
       // Preset change loads its recipe into the sliders, then applies.
       html.find('select[name=preset]').on('change', function (this: HTMLSelectElement) {
         const recipe = PRESET_RECIPES[this.value as VoicePreset];
@@ -176,6 +189,7 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
             setSlider(name as keyof SliderValues, value);
           }
         }
+        updatePresetNote(this.value as VoicePreset);
         applyLive();
       });
 
@@ -194,19 +208,29 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
             : '<i class="fas fa-headphones"></i> Preview my voice',
         );
       };
+      const startPreview = (notifyOnFail: boolean): void => {
+        voicePreviewer
+          .start(readProfileFromForm(form))
+          .then(() => setBtnState(true))
+          .catch((err: unknown) => {
+            setBtnState(false);
+            if (notifyOnFail) {
+              ui.notifications?.warn(`Within Earshot: preview failed — ${String(err)}`);
+            }
+          });
+      };
       btn.on('click', () => {
         if (voicePreviewer.isActive()) {
           voicePreviewer.stop();
           setBtnState(false);
           return;
         }
-        voicePreviewer
-          .start(readProfileFromForm(form))
-          .then(() => setBtnState(true))
-          .catch((err: unknown) => {
-            ui.notifications?.warn(`Within Earshot: preview failed — ${String(err)}`);
-          });
+        startPreview(true);
       });
+
+      // The whole point of opening this dialog is hearing the result — start monitoring
+      // immediately; the button remains as the off switch.
+      startPreview(false);
     },
     close: () => {
       voicePreviewer.stop();

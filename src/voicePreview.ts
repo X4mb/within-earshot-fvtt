@@ -18,6 +18,9 @@ class VoicePreviewer {
   private chain: VoiceChainNodes | null = null;
   private workletReady = false;
   private starting = false;
+  /** Live track we switched to raw processing for the monitor; restored on stop. */
+  private tappedTrack: MediaStreamTrack | null = null;
+  private tappedOriginal: MediaTrackConstraints | null = null;
 
   isActive(): boolean {
     return this.ctx !== null;
@@ -38,6 +41,34 @@ class VoicePreviewer {
       if (liveRaw?.getAudioTracks().some((t) => t.readyState === 'live')) {
         mic = liveRaw;
         this.ownsMicStream = false;
+        // Self-monitoring an echo-cancelled capture cancels the GM's own voice (the EC sees the
+        // monitor playback as echo of the mic — the cut-outs). The GM is muted to players while
+        // the dialog is open, so switch the live track to raw processing for the duration of
+        // the preview and restore the original settings on stop.
+        const track = mic.getAudioTracks().find((t) => t.readyState === 'live');
+        if (track) {
+          const s = track.getSettings() as {
+            echoCancellation?: boolean;
+            noiseSuppression?: boolean;
+            autoGainControl?: boolean;
+          };
+          const original: MediaTrackConstraints = {};
+          if (s.echoCancellation !== undefined) original.echoCancellation = s.echoCancellation;
+          if (s.noiseSuppression !== undefined) original.noiseSuppression = s.noiseSuppression;
+          if (s.autoGainControl !== undefined) original.autoGainControl = s.autoGainControl;
+          try {
+            await track.applyConstraints({
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            });
+            this.tappedTrack = track;
+            this.tappedOriginal = original;
+          } catch {
+            // Constraint change unsupported: preview still works, just through the browser's
+            // processing.
+          }
+        }
       } else {
         // No live A/V: capture raw (browser noise suppression / AGC clip word onsets and made
         // the monitor feel choppy). Prefer the input device from Foundry's A/V settings.
@@ -56,8 +87,19 @@ class VoicePreviewer {
         this.ownsMicStream = true;
       }
       const ctx = new AudioContext({ sampleRate: 48000 });
-      // Started from the preview button click, so a user gesture is active and resume cannot hang.
-      await ctx.resume();
+      // The preview may auto-start with the dialog, where the opening gesture can already have
+      // expired — never await resume (it can stay pending under autoplay policy); retry on the
+      // next pointer gesture instead.
+      void ctx.resume().catch(() => { /* retried below */ });
+      if (ctx.state === 'suspended') {
+        window.addEventListener(
+          'pointerdown',
+          () => {
+            if (this.ctx?.state === 'suspended') void this.ctx.resume().catch(() => { /* */ });
+          },
+          { once: true },
+        );
+      }
       try {
         const blobUrl = URL.createObjectURL(
           new Blob([PITCH_SHIFT_WORKLET_CODE], { type: 'application/javascript' }),
@@ -95,6 +137,11 @@ class VoicePreviewer {
     this.chain = null;
     try { this.source?.disconnect(); } catch { /* */ }
     this.source = null;
+    if (this.tappedTrack && this.tappedOriginal) {
+      void this.tappedTrack.applyConstraints(this.tappedOriginal).catch(() => { /* */ });
+    }
+    this.tappedTrack = null;
+    this.tappedOriginal = null;
     if (this.ownsMicStream) {
       for (const t of this.micStream?.getTracks() ?? []) t.stop();
     }

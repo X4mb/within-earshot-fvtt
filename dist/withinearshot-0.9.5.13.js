@@ -404,7 +404,7 @@ function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
   const filters = [];
   let workletNode = null;
   let ringOsc = null;
-  const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : preset === "feminine" ? 4.5 : preset === "masculine" ? -4.5 : 0;
+  const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : preset === "feminine" ? 3.5 : preset === "masculine" ? -3.5 : 0;
   const pitchShift = profile.pitchShift || presetDefaultShift;
   const pitchFactor = Math.pow(2, pitchShift / 12);
   let head = source;
@@ -1164,6 +1164,9 @@ var VoicePreviewer = class {
   chain = null;
   workletReady = false;
   starting = false;
+  /** Live track we switched to raw processing for the monitor; restored on stop. */
+  tappedTrack = null;
+  tappedOriginal = null;
   isActive() {
     return this.ctx !== null;
   }
@@ -1176,6 +1179,24 @@ var VoicePreviewer = class {
       if (liveRaw?.getAudioTracks().some((t) => t.readyState === "live")) {
         mic = liveRaw;
         this.ownsMicStream = false;
+        const track = mic.getAudioTracks().find((t) => t.readyState === "live");
+        if (track) {
+          const s2 = track.getSettings();
+          const original = {};
+          if (s2.echoCancellation !== void 0) original.echoCancellation = s2.echoCancellation;
+          if (s2.noiseSuppression !== void 0) original.noiseSuppression = s2.noiseSuppression;
+          if (s2.autoGainControl !== void 0) original.autoGainControl = s2.autoGainControl;
+          try {
+            await track.applyConstraints({
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            });
+            this.tappedTrack = track;
+            this.tappedOriginal = original;
+          } catch {
+          }
+        }
       } else {
         const constraints = {
           echoCancellation: false,
@@ -1190,7 +1211,18 @@ var VoicePreviewer = class {
         this.ownsMicStream = true;
       }
       const ctx = new AudioContext({ sampleRate: 48e3 });
-      await ctx.resume();
+      void ctx.resume().catch(() => {
+      });
+      if (ctx.state === "suspended") {
+        window.addEventListener(
+          "pointerdown",
+          () => {
+            if (this.ctx?.state === "suspended") void this.ctx.resume().catch(() => {
+            });
+          },
+          { once: true }
+        );
+      }
       try {
         const blobUrl = URL.createObjectURL(
           new Blob([PITCH_SHIFT_WORKLET_CODE], { type: "application/javascript" })
@@ -1229,6 +1261,12 @@ var VoicePreviewer = class {
     } catch {
     }
     this.source = null;
+    if (this.tappedTrack && this.tappedOriginal) {
+      void this.tappedTrack.applyConstraints(this.tappedOriginal).catch(() => {
+      });
+    }
+    this.tappedTrack = null;
+    this.tappedOriginal = null;
     if (this.ownsMicStream) {
       for (const t of this.micStream?.getTracks() ?? []) t.stop();
     }
@@ -1259,11 +1297,13 @@ var PRESET_RECIPES = {
   none: { ...SLIDER_DEFAULTS },
   deep: { pitchShift: -4, eqLowGain: 6, eqHighGain: -4, distortion: 0, echo: 0 },
   high: { pitchShift: 4, eqLowGain: -4, eqHighGain: 4, distortion: 0, echo: 0 },
-  // M→F: raise pitch into the female median range; cut chest resonance hard (a pitched-up voice
-  // with male chest weight reads as "small man", not as female); brighten for head-voice timbre.
-  feminine: { pitchShift: 4.5, eqLowGain: -8, eqHighGain: 5, distortion: 0, echo: 0 },
-  // F→M: mirror — lower pitch, rebuild chest weight, darken the top end.
-  masculine: { pitchShift: -4.5, eqLowGain: 7, eqHighGain: -4, distortion: 0, echo: 0 },
+  // M→F: our granular shifter moves formants along with pitch, so a big shift turns chipmunk
+  // fast — stay moderate on pitch (+3.5) and let EQ carry the rest: cut chest resonance hard
+  // (a pitched-up voice with male chest weight reads as "small man", not female) and brighten
+  // for head-voice timbre. Pitch MUST then be tuned to the speaker's base voice (see note).
+  feminine: { pitchShift: 3.5, eqLowGain: -9, eqHighGain: 6, distortion: 0, echo: 0 },
+  // F→M: mirror — lower pitch moderately, rebuild chest weight, darken the top end.
+  masculine: { pitchShift: -3.5, eqLowGain: 7, eqHighGain: -4, distortion: 0, echo: 0 },
   robot: { pitchShift: 0, eqLowGain: 0, eqHighGain: 2, distortion: 15, echo: 0 },
   whisper: { pitchShift: 0, eqLowGain: 0, eqHighGain: 3, distortion: 0, echo: 0 },
   custom: null
@@ -1304,6 +1344,10 @@ function openVoiceAssignDialogForActor(actor) {
         <label><b>Voice Preset</b></label>
         <select name="preset" style="width:100%">${presetOptions}</select>
         <p class="notes" style="margin:2px 0 0">Presets load starting values into the sliders \u2014 tweak from there.</p>
+        <p class="notes" id="wea-preset-note" style="display:none; margin:2px 0 0"><b>Tune the pitch to the speaker:</b>
+          the right shift depends on how low or high the base voice is. A deep voice needs more
+          (up to \xB15), a lighter voice less (\xB12\u20133). Go in 0.5 steps until it stops sounding
+          artificial, then adjust Bass/Treble.</p>
       </div>
       ${slider("pitchShift", "Pitch shift (semitones)", "wea-pitch-val", -12, 12, 0.5, pitchShift)}
       ${slider("eqLowGain", "Bass (dB)", "wea-low-val", -18, 18, 1, eqLowGain)}
@@ -1372,6 +1416,12 @@ function openVoiceAssignDialogForActor(actor) {
         }, 120);
       };
       html.find("input[type=range]").on("input change", applyLive);
+      const updatePresetNote = (preset) => {
+        const note = html.find("#wea-preset-note");
+        if (preset === "feminine" || preset === "masculine") note.show();
+        else note.hide();
+      };
+      updatePresetNote(currentPreset);
       html.find("select[name=preset]").on("change", function() {
         const recipe = PRESET_RECIPES[this.value];
         if (recipe) {
@@ -1379,6 +1429,7 @@ function openVoiceAssignDialogForActor(actor) {
             setSlider(name, value);
           }
         }
+        updatePresetNote(this.value);
         applyLive();
       });
       html.find("#wea-reset-btn").on("click", () => {
@@ -1393,16 +1444,23 @@ function openVoiceAssignDialogForActor(actor) {
           on ? '<i class="fas fa-stop"></i> Stop preview' : '<i class="fas fa-headphones"></i> Preview my voice'
         );
       };
+      const startPreview = (notifyOnFail) => {
+        voicePreviewer.start(readProfileFromForm(form)).then(() => setBtnState(true)).catch((err) => {
+          setBtnState(false);
+          if (notifyOnFail) {
+            ui.notifications?.warn(`Within Earshot: preview failed \u2014 ${String(err)}`);
+          }
+        });
+      };
       btn.on("click", () => {
         if (voicePreviewer.isActive()) {
           voicePreviewer.stop();
           setBtnState(false);
           return;
         }
-        voicePreviewer.start(readProfileFromForm(form)).then(() => setBtnState(true)).catch((err) => {
-          ui.notifications?.warn(`Within Earshot: preview failed \u2014 ${String(err)}`);
-        });
+        startPreview(true);
       });
+      startPreview(false);
     },
     close: () => {
       voicePreviewer.stop();
@@ -1708,4 +1766,4 @@ Hooks.once("ready", async () => {
       copyAvSessionLogToClipboard
     };
 });
-//# sourceMappingURL=withinearshot-0.9.5.12.js.map
+//# sourceMappingURL=withinearshot-0.9.5.13.js.map

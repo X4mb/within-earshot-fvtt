@@ -50,8 +50,8 @@ export function buildVoiceChain(
   const presetDefaultShift =
     preset === 'deep' ? -4
     : preset === 'high' ? 4
-    : preset === 'feminine' ? 4.5
-    : preset === 'masculine' ? -4.5
+    : preset === 'feminine' ? 3.5
+    : preset === 'masculine' ? -3.5
     : 0;
   const pitchShift = profile.pitchShift || presetDefaultShift;
   const pitchFactor = Math.pow(2, pitchShift / 12);
