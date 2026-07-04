@@ -1,4 +1,5 @@
 import { PITCH_SHIFT_WORKLET_CODE } from './pitchShiftWorklet.js';
+import { voiceChangerProcessor } from './voiceChangerProcessor.js';
 import { buildVoiceChain, teardownVoiceChain } from './voiceChain.js';
 import type { VoiceChainNodes } from './voiceChain.js';
 import type { VoiceProfile } from './voiceProfile.js';
@@ -11,6 +12,8 @@ import type { VoiceProfile } from './voiceProfile.js';
 class VoicePreviewer {
   private ctx: AudioContext | null = null;
   private micStream: MediaStream | null = null;
+  /** Only stop tracks we captured ourselves — never the live A/V stream we merely tap. */
+  private ownsMicStream = false;
   private source: MediaStreamAudioSourceNode | null = null;
   private chain: VoiceChainNodes | null = null;
   private workletReady = false;
@@ -24,22 +27,34 @@ class VoicePreviewer {
     if (this.starting || this.ctx) return;
     this.starting = true;
     try {
-      // Raw capture: browser noise suppression / AGC clip word onsets and duck quiet speech,
-      // which made the monitor feel choppy next to the live open-mic path. This capture is also
-      // independent of Foundry's push-to-talk / voice-activation gating — the preview is always
-      // open mic. Prefer the input device configured in Foundry's A/V settings.
-      const constraints: MediaTrackConstraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      };
-      const audioSrc = (game as unknown as {
-        webrtc?: { settings?: { get(scope: string, key: string): unknown } };
-      }).webrtc?.settings?.get('client', 'audioSrc');
-      if (typeof audioSrc === 'string' && audioSrc !== 'disabled' && audioSrc !== 'default') {
-        constraints.deviceId = { ideal: audioSrc };
+      // Prefer tapping the raw mic stream the live A/V path already holds: a second
+      // getUserMedia on the same device with different constraints can end/silence the first
+      // capture on Firefox (GM goes mute to players until the mic is re-acquired), and the
+      // shared capture means the preview is exactly what players would hear. The raw input
+      // feeds our graph before Foundry's push-to-talk / voice-activation gating (that toggles
+      // the processed output track), so the preview is always open mic either way.
+      const liveRaw = voiceChangerProcessor.getRawInputStream();
+      let mic: MediaStream;
+      if (liveRaw?.getAudioTracks().some((t) => t.readyState === 'live')) {
+        mic = liveRaw;
+        this.ownsMicStream = false;
+      } else {
+        // No live A/V: capture raw (browser noise suppression / AGC clip word onsets and made
+        // the monitor feel choppy). Prefer the input device from Foundry's A/V settings.
+        const constraints: MediaTrackConstraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
+        const audioSrc = (game as unknown as {
+          webrtc?: { settings?: { get(scope: string, key: string): unknown } };
+        }).webrtc?.settings?.get('client', 'audioSrc');
+        if (typeof audioSrc === 'string' && audioSrc !== 'disabled' && audioSrc !== 'default') {
+          constraints.deviceId = { ideal: audioSrc };
+        }
+        mic = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        this.ownsMicStream = true;
       }
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: constraints });
       const ctx = new AudioContext({ sampleRate: 48000 });
       // Started from the preview button click, so a user gesture is active and resume cannot hang.
       await ctx.resume();
@@ -80,7 +95,10 @@ class VoicePreviewer {
     this.chain = null;
     try { this.source?.disconnect(); } catch { /* */ }
     this.source = null;
-    for (const t of this.micStream?.getTracks() ?? []) t.stop();
+    if (this.ownsMicStream) {
+      for (const t of this.micStream?.getTracks() ?? []) t.stop();
+    }
+    this.ownsMicStream = false;
     this.micStream = null;
     try { void this.ctx?.close(); } catch { /* */ }
     this.ctx = null;

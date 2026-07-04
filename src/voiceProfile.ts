@@ -1,6 +1,15 @@
 import { MODULE_ID } from './constants.js';
 
-export type VoicePreset = 'none' | 'deep' | 'high' | 'robot' | 'whisper' | 'custom';
+/** 'robot' is no longer offered in the dialog but stays valid for previously saved profiles. */
+export type VoicePreset =
+  | 'none'
+  | 'deep'
+  | 'high'
+  | 'feminine'
+  | 'masculine'
+  | 'robot'
+  | 'whisper'
+  | 'custom';
 
 export interface VoiceProfile {
   gainMultiplier?: number;

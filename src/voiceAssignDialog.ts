@@ -6,12 +6,13 @@ import { getVoiceTokenIdFromUser } from './voiceToken.js';
 import type { VoicePreset, VoiceProfile } from './voiceProfile.js';
 
 const PRESETS: { value: VoicePreset; label: string }[] = [
-  { value: 'none',    label: 'None (passthrough)' },
-  { value: 'deep',    label: 'Deep' },
-  { value: 'high',    label: 'High' },
-  { value: 'robot',   label: 'Robot' },
-  { value: 'whisper', label: 'Whisper' },
-  { value: 'custom',  label: 'Custom' },
+  { value: 'none',      label: 'None (passthrough)' },
+  { value: 'deep',      label: 'Deep' },
+  { value: 'high',      label: 'High' },
+  { value: 'feminine',  label: 'Female (male → female)' },
+  { value: 'masculine', label: 'Male (female → male)' },
+  { value: 'whisper',   label: 'Whisper' },
+  { value: 'custom',    label: 'Custom' },
 ];
 
 type SliderValues = {
@@ -32,6 +33,11 @@ const PRESET_RECIPES: Record<VoicePreset, SliderValues | null> = {
   none:    { ...SLIDER_DEFAULTS },
   deep:    { pitchShift: -4, eqLowGain: 6,  eqHighGain: -4, distortion: 0,  echo: 0 },
   high:    { pitchShift: 4,  eqLowGain: -4, eqHighGain: 4,  distortion: 0,  echo: 0 },
+  // M→F: raise pitch into the female median range; cut chest resonance hard (a pitched-up voice
+  // with male chest weight reads as "small man", not as female); brighten for head-voice timbre.
+  feminine: { pitchShift: 4.5, eqLowGain: -8, eqHighGain: 5, distortion: 0, echo: 0 },
+  // F→M: mirror — lower pitch, rebuild chest weight, darken the top end.
+  masculine: { pitchShift: -4.5, eqLowGain: 7, eqHighGain: -4, distortion: 0, echo: 0 },
   robot:   { pitchShift: 0,  eqLowGain: 0,  eqHighGain: 2,  distortion: 15, echo: 0 },
   whisper: { pitchShift: 0,  eqLowGain: 0,  eqHighGain: 3,  distortion: 0,  echo: 0 },
   custom:  null,
@@ -204,6 +210,16 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
     },
     close: () => {
       voicePreviewer.stop();
+      // Recovery net: if something ended the live mic capture (e.g. a device conflict from a
+      // second getUserMedia), re-acquire it — otherwise the GM stays silent to players.
+      const raw = voiceChangerProcessor.getRawInputStream();
+      if (raw && raw.getAudioTracks().length > 0 && raw.getAudioTracks().every((t) => t.readyState === 'ended')) {
+        console.warn('[withinearshot] live mic track dead after dialog close — re-acquiring');
+        const client = game.webrtc?.client as unknown as
+          | { updateLocalStream?: () => Promise<void> }
+          | undefined;
+        void client?.updateLocalStream?.()?.catch?.(() => { /* */ });
+      }
       if (canMuteLive) {
         voiceChangerProcessor.setOutputMuted(false);
         // Re-apply the persisted profile: reverts live tuning on Cancel, and after Save the

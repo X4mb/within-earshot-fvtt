@@ -46,8 +46,13 @@ export function buildVoiceChain(
   let workletNode: AudioWorkletNode | null = null;
   let ringOsc: OscillatorNode | null = null;
 
-  /** Slider at 0 (or unset) means "use the preset's character" — Deep/High shift by default. */
-  const presetDefaultShift = preset === 'deep' ? -4 : preset === 'high' ? 4 : 0;
+  /** Slider at 0 (or unset) means "use the preset's character" — these presets shift by default. */
+  const presetDefaultShift =
+    preset === 'deep' ? -4
+    : preset === 'high' ? 4
+    : preset === 'feminine' ? 4.5
+    : preset === 'masculine' ? -4.5
+    : 0;
   const pitchShift = profile.pitchShift || presetDefaultShift;
   const pitchFactor = Math.pow(2, pitchShift / 12);
 

@@ -8,6 +8,7 @@ type State = 'uninitialized' | 'initializing' | 'ready' | 'disposed';
 
 class VoiceChangerProcessor {
   private ctx: AudioContext | null = null;
+  private rawInputStream: MediaStream | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private destNode: MediaStreamAudioDestinationNode | null = null;
   private processedStream: MediaStream | null = null;
@@ -26,6 +27,15 @@ class VoiceChangerProcessor {
 
   getProcessedStream(): MediaStream | null {
     return this.processedStream;
+  }
+
+  /**
+   * The raw mic stream feeding this processor. The dialog preview taps it instead of opening a
+   * second getUserMedia capture: Firefox can end/silence the first capture when the same device
+   * is opened twice with conflicting constraints, leaving the GM mute to players.
+   */
+  getRawInputStream(): MediaStream | null {
+    return this.rawInputStream;
   }
 
   /** True when the track is this processor's output (lets callers avoid re-processing it). */
@@ -52,6 +62,7 @@ class VoiceChangerProcessor {
       this.ctx = new AudioContext({ sampleRate: 48000 });
       this.resumeWhenAllowed();
 
+      this.rawInputStream = micStream;
       this.sourceNode = this.ctx.createMediaStreamSource(micStream);
       this.destNode = this.ctx.createMediaStreamDestination();
       this.processedStream = this.destNode.stream;
@@ -89,6 +100,7 @@ class VoiceChangerProcessor {
       this.workletBlobUrl = null;
     }
     this.ctx = null;
+    this.rawInputStream = null;
     this.sourceNode = null;
     this.destNode = null;
     this.processedStream = null;

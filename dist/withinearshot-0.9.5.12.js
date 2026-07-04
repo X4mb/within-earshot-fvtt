@@ -404,7 +404,7 @@ function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
   const filters = [];
   let workletNode = null;
   let ringOsc = null;
-  const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : 0;
+  const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : preset === "feminine" ? 4.5 : preset === "masculine" ? -4.5 : 0;
   const pitchShift = profile.pitchShift || presetDefaultShift;
   const pitchFactor = Math.pow(2, pitchShift / 12);
   let head = source;
@@ -533,6 +533,7 @@ function teardownVoiceChain(chain, source) {
 // src/voiceChangerProcessor.ts
 var VoiceChangerProcessor = class {
   ctx = null;
+  rawInputStream = null;
   sourceNode = null;
   destNode = null;
   processedStream = null;
@@ -549,6 +550,14 @@ var VoiceChangerProcessor = class {
   }
   getProcessedStream() {
     return this.processedStream;
+  }
+  /**
+   * The raw mic stream feeding this processor. The dialog preview taps it instead of opening a
+   * second getUserMedia capture: Firefox can end/silence the first capture when the same device
+   * is opened twice with conflicting constraints, leaving the GM mute to players.
+   */
+  getRawInputStream() {
+    return this.rawInputStream;
   }
   /** True when the track is this processor's output (lets callers avoid re-processing it). */
   ownsTrack(track) {
@@ -570,6 +579,7 @@ var VoiceChangerProcessor = class {
     try {
       this.ctx = new AudioContext({ sampleRate: 48e3 });
       this.resumeWhenAllowed();
+      this.rawInputStream = micStream;
       this.sourceNode = this.ctx.createMediaStreamSource(micStream);
       this.destNode = this.ctx.createMediaStreamDestination();
       this.processedStream = this.destNode.stream;
@@ -608,6 +618,7 @@ var VoiceChangerProcessor = class {
       this.workletBlobUrl = null;
     }
     this.ctx = null;
+    this.rawInputStream = null;
     this.sourceNode = null;
     this.destNode = null;
     this.processedStream = null;
@@ -1147,6 +1158,8 @@ function registerVoiceTokenKeybinding() {
 var VoicePreviewer = class {
   ctx = null;
   micStream = null;
+  /** Only stop tracks we captured ourselves — never the live A/V stream we merely tap. */
+  ownsMicStream = false;
   source = null;
   chain = null;
   workletReady = false;
@@ -1158,16 +1171,24 @@ var VoicePreviewer = class {
     if (this.starting || this.ctx) return;
     this.starting = true;
     try {
-      const constraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
-      };
-      const audioSrc = game.webrtc?.settings?.get("client", "audioSrc");
-      if (typeof audioSrc === "string" && audioSrc !== "disabled" && audioSrc !== "default") {
-        constraints.deviceId = { ideal: audioSrc };
+      const liveRaw = voiceChangerProcessor.getRawInputStream();
+      let mic;
+      if (liveRaw?.getAudioTracks().some((t) => t.readyState === "live")) {
+        mic = liveRaw;
+        this.ownsMicStream = false;
+      } else {
+        const constraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        };
+        const audioSrc = game.webrtc?.settings?.get("client", "audioSrc");
+        if (typeof audioSrc === "string" && audioSrc !== "disabled" && audioSrc !== "default") {
+          constraints.deviceId = { ideal: audioSrc };
+        }
+        mic = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        this.ownsMicStream = true;
       }
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: constraints });
       const ctx = new AudioContext({ sampleRate: 48e3 });
       await ctx.resume();
       try {
@@ -1208,7 +1229,10 @@ var VoicePreviewer = class {
     } catch {
     }
     this.source = null;
-    for (const t of this.micStream?.getTracks() ?? []) t.stop();
+    if (this.ownsMicStream) {
+      for (const t of this.micStream?.getTracks() ?? []) t.stop();
+    }
+    this.ownsMicStream = false;
     this.micStream = null;
     try {
       void this.ctx?.close();
@@ -1225,7 +1249,8 @@ var PRESETS = [
   { value: "none", label: "None (passthrough)" },
   { value: "deep", label: "Deep" },
   { value: "high", label: "High" },
-  { value: "robot", label: "Robot" },
+  { value: "feminine", label: "Female (male \u2192 female)" },
+  { value: "masculine", label: "Male (female \u2192 male)" },
   { value: "whisper", label: "Whisper" },
   { value: "custom", label: "Custom" }
 ];
@@ -1234,6 +1259,11 @@ var PRESET_RECIPES = {
   none: { ...SLIDER_DEFAULTS },
   deep: { pitchShift: -4, eqLowGain: 6, eqHighGain: -4, distortion: 0, echo: 0 },
   high: { pitchShift: 4, eqLowGain: -4, eqHighGain: 4, distortion: 0, echo: 0 },
+  // M→F: raise pitch into the female median range; cut chest resonance hard (a pitched-up voice
+  // with male chest weight reads as "small man", not as female); brighten for head-voice timbre.
+  feminine: { pitchShift: 4.5, eqLowGain: -8, eqHighGain: 5, distortion: 0, echo: 0 },
+  // F→M: mirror — lower pitch, rebuild chest weight, darken the top end.
+  masculine: { pitchShift: -4.5, eqLowGain: 7, eqHighGain: -4, distortion: 0, echo: 0 },
   robot: { pitchShift: 0, eqLowGain: 0, eqHighGain: 2, distortion: 15, echo: 0 },
   whisper: { pitchShift: 0, eqLowGain: 0, eqHighGain: 3, distortion: 0, echo: 0 },
   custom: null
@@ -1376,6 +1406,13 @@ function openVoiceAssignDialogForActor(actor) {
     },
     close: () => {
       voicePreviewer.stop();
+      const raw = voiceChangerProcessor.getRawInputStream();
+      if (raw && raw.getAudioTracks().length > 0 && raw.getAudioTracks().every((t) => t.readyState === "ended")) {
+        console.warn("[withinearshot] live mic track dead after dialog close \u2014 re-acquiring");
+        const client = game.webrtc?.client;
+        void client?.updateLocalStream?.()?.catch?.(() => {
+        });
+      }
       if (canMuteLive) {
         voiceChangerProcessor.setOutputMuted(false);
         if (isLiveVoiceActor(actorId)) {
@@ -1671,4 +1708,4 @@ Hooks.once("ready", async () => {
       copyAvSessionLogToClipboard
     };
 });
-//# sourceMappingURL=withinearshot-0.9.5.11.js.map
+//# sourceMappingURL=withinearshot-0.9.5.12.js.map
