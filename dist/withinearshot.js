@@ -1250,16 +1250,24 @@ HooksOn.on("getTokenPlaceableContextOptions", (...args) => {
     const layer = canvas?.tokens;
     return layer?.hover?.actor ?? layer?.controlled[0]?.actor ?? null;
   };
+  const openForTarget = (t) => {
+    const actor = resolveTokenActor(t);
+    if (actor) openVoiceAssignDialogForActor(actor);
+    else ui.notifications?.warn("Within Earshot: could not resolve the token\u2019s actor for this menu.");
+  };
   options.push({
+    // v13 reads name/condition/callback; v14 prefers label/visible/onClick (old fields warn).
     name: "Assign Voice",
+    label: "Assign Voice",
     icon: '<i class="fas fa-microphone-alt"></i>',
     // Always visible for the GM: a failing resolver must not silently hide the entry.
     condition: () => true,
-    callback: (t) => {
-      const actor = resolveTokenActor(t);
-      if (actor) openVoiceAssignDialogForActor(actor);
-      else ui.notifications?.warn("Within Earshot: could not resolve the token\u2019s actor for this menu.");
-    }
+    visible: () => {
+      dlog("Assign Voice entry evaluated in token placeable menu (menu opened)");
+      return true;
+    },
+    callback: openForTarget,
+    onClick: (_event, t) => openForTarget(t)
   });
 });
 HooksOn.on("renderTokenHUD", (...args) => {
@@ -1327,23 +1335,34 @@ HooksOn.on("getActorContextOptions", (...args) => {
     const id = ds?.entryId ?? ds?.documentId ?? ds?.actorId;
     return id ? game.actors?.get(id) ?? null : null;
   };
+  const openForEntry = (li) => {
+    const actor = resolveActor(li);
+    if (actor) openVoiceAssignDialogForActor(actor);
+    else ui.notifications?.warn("Within Earshot: could not resolve the actor for this menu entry.");
+  };
   options.push({
+    // v13 reads name/condition/callback; v14 prefers label/visible/onClick (old fields warn).
     name: "Assign Voice",
+    label: "Assign Voice",
     icon: '<i class="fas fa-microphone-alt"></i>',
     // Always visible for the GM: a failing resolver must not silently hide the entry.
     condition: () => true,
-    callback: (li) => {
-      const actor = resolveActor(li);
-      if (actor) openVoiceAssignDialogForActor(actor);
-      else ui.notifications?.warn("Within Earshot: could not resolve the actor for this menu entry.");
-    }
+    visible: () => {
+      dlog("Assign Voice entry evaluated in actor directory menu (menu opened)");
+      return true;
+    },
+    callback: openForEntry,
+    onClick: (_event, li) => openForEntry(li)
   });
 });
 Hooks.once("i18nInit", registerModuleSettings);
 Hooks.once("ready", async () => {
   if (game.user?.isGM) {
     const version = game.modules?.get(MODULE_ID)?.version ?? "?";
-    ui.notifications?.info(`Within Earshot (Test) v${version} active`);
+    ui.notifications?.info(
+      `Within Earshot (Test) v${version} active`,
+      { permanent: true }
+    );
   }
   await clearVoiceTokenFlagForCurrentUser();
   const H = Hooks;

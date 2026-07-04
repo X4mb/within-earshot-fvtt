@@ -79,10 +79,13 @@ HooksOn.on('getTokenPlaceableContextOptions', (...args: unknown[]) => {
   if (!game.user?.isGM) return;
   dlog('getTokenPlaceableContextOptions fired');
   const options = args[1] as Array<{
-    name: string;
+    name?: string;
+    label?: string;
     icon: string;
     condition?: (t: unknown) => boolean;
-    callback: (t: unknown) => void;
+    visible?: (t: unknown) => boolean;
+    callback?: (t: unknown) => void;
+    onClick?: (event: unknown, t: unknown) => void;
   }>;
   const resolveTokenActor = (target: unknown): Actor | null => {
     if (target instanceof HTMLElement) {
@@ -99,16 +102,24 @@ HooksOn.on('getTokenPlaceableContextOptions', (...args: unknown[]) => {
     const layer = canvas?.tokens as unknown as { hover?: Token | null; controlled: Token[] } | undefined;
     return layer?.hover?.actor ?? layer?.controlled[0]?.actor ?? null;
   };
+  const openForTarget = (t: unknown): void => {
+    const actor = resolveTokenActor(t);
+    if (actor) openVoiceAssignDialogForActor(actor);
+    else ui.notifications?.warn('Within Earshot: could not resolve the token’s actor for this menu.');
+  };
   options.push({
+    // v13 reads name/condition/callback; v14 prefers label/visible/onClick (old fields warn).
     name: 'Assign Voice',
+    label: 'Assign Voice',
     icon: '<i class="fas fa-microphone-alt"></i>',
     // Always visible for the GM: a failing resolver must not silently hide the entry.
     condition: () => true,
-    callback: (t: unknown) => {
-      const actor = resolveTokenActor(t);
-      if (actor) openVoiceAssignDialogForActor(actor);
-      else ui.notifications?.warn('Within Earshot: could not resolve the token’s actor for this menu.');
+    visible: () => {
+      dlog('Assign Voice entry evaluated in token placeable menu (menu opened)');
+      return true;
     },
+    callback: openForTarget,
+    onClick: (_event: unknown, t: unknown) => openForTarget(t),
   });
 });
 
@@ -193,10 +204,13 @@ HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
   if (!game.user?.isGM) return;
   dlog('getActorContextOptions fired');
   const options = args[1] as Array<{
-    name: string;
+    name?: string;
+    label?: string;
     icon: string;
     condition?: (li: unknown) => boolean;
-    callback: (li: unknown) => void;
+    visible?: (li: unknown) => boolean;
+    callback?: (li: unknown) => void;
+    onClick?: (event: unknown, li: unknown) => void;
   }>;
   const resolveActor = (li: unknown): Actor | null => {
     const raw = li instanceof HTMLElement ? li : ((li as JQuery)?.[0] ?? null);
@@ -206,16 +220,24 @@ HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
     const id = ds?.entryId ?? ds?.documentId ?? ds?.actorId;
     return id ? (game.actors?.get(id) ?? null) : null;
   };
+  const openForEntry = (li: unknown): void => {
+    const actor = resolveActor(li);
+    if (actor) openVoiceAssignDialogForActor(actor);
+    else ui.notifications?.warn('Within Earshot: could not resolve the actor for this menu entry.');
+  };
   options.push({
+    // v13 reads name/condition/callback; v14 prefers label/visible/onClick (old fields warn).
     name: 'Assign Voice',
+    label: 'Assign Voice',
     icon: '<i class="fas fa-microphone-alt"></i>',
     // Always visible for the GM: a failing resolver must not silently hide the entry.
     condition: () => true,
-    callback: (li: unknown) => {
-      const actor = resolveActor(li);
-      if (actor) openVoiceAssignDialogForActor(actor);
-      else ui.notifications?.warn('Within Earshot: could not resolve the actor for this menu entry.');
+    visible: () => {
+      dlog('Assign Voice entry evaluated in actor directory menu (menu opened)');
+      return true;
     },
+    callback: openForEntry,
+    onClick: (_event: unknown, li: unknown) => openForEntry(li),
   });
 });
 
@@ -231,7 +253,11 @@ Hooks.once('ready', async () => {
   // Unmissable build marker for the GM: proves the test module is actually running this version.
   if (game.user?.isGM) {
     const version = (game.modules?.get(MODULE_ID) as { version?: string } | undefined)?.version ?? '?';
-    ui.notifications?.info(`Within Earshot (Test) v${version} active`);
+    // Permanent (must be dismissed by hand): a 5-second toast during scene load is easy to miss.
+    (ui.notifications as unknown as { info(msg: string, opts?: object): unknown })?.info(
+      `Within Earshot (Test) v${version} active`,
+      { permanent: true },
+    );
   }
   await clearVoiceTokenFlagForCurrentUser();
 
