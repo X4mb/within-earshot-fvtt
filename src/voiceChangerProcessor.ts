@@ -1,27 +1,24 @@
 import { PITCH_SHIFT_WORKLET_CODE } from './pitchShiftWorklet.js';
 import { pushAvSessionLog } from './avSessionLog.js';
-import type { VoiceProfile, VoicePreset } from './voiceProfile.js';
+import { buildVoiceChain, teardownVoiceChain } from './voiceChain.js';
+import type { VoiceChainNodes } from './voiceChain.js';
+import type { VoiceProfile } from './voiceProfile.js';
 
 type State = 'uninitialized' | 'initializing' | 'ready' | 'disposed';
-
-interface ActiveChain {
-  workletNode: AudioWorkletNode | null;
-  filters: AudioNode[];
-  ringOsc: OscillatorNode | null;
-  outputGain: GainNode;
-}
 
 class VoiceChangerProcessor {
   private ctx: AudioContext | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private destNode: MediaStreamAudioDestinationNode | null = null;
   private processedStream: MediaStream | null = null;
-  private chain: ActiveChain | null = null;
+  private chain: VoiceChainNodes | null = null;
   private state: State = 'uninitialized';
   private workletReady = false;
   private workletFailed = false;
   private pendingProfile: VoiceProfile | null = null;
   private workletBlobUrl: string | null = null;
+  private chainBaseGain = 1;
+  private outputMuted = false;
 
   isInitialized(): boolean {
     return this.state === 'ready';
@@ -34,6 +31,16 @@ class VoiceChangerProcessor {
   /** True when the track is this processor's output (lets callers avoid re-processing it). */
   ownsTrack(track: MediaStreamTrack): boolean {
     return this.processedStream?.getAudioTracks().includes(track) ?? false;
+  }
+
+  /**
+   * Hard-mute the processed output at the chain gain. Unlike toggling track.enabled — which
+   * Foundry's voice-activation gating flips on speech and would undo — a zero gain guarantees
+   * peers hear silence, e.g. while the GM tunes a voice in the Assign Voice dialog.
+   */
+  setOutputMuted(muted: boolean): void {
+    this.outputMuted = muted;
+    if (this.chain) this.chain.outputGain.gain.value = muted ? 0 : this.chainBaseGain;
   }
 
   async initialize(micStream: MediaStream): Promise<void> {
@@ -130,149 +137,21 @@ class VoiceChangerProcessor {
 
   private async buildChain(profile: VoiceProfile): Promise<void> {
     if (!this.ctx || !this.sourceNode || !this.destNode) return;
-
     this.tearDownChain();
-
-    const ctx = this.ctx;
-    const preset: VoicePreset = profile.preset ?? 'none';
-    const outputGain = ctx.createGain();
-    outputGain.connect(this.destNode);
-
-    const filters: AudioNode[] = [];
-    let workletNode: AudioWorkletNode | null = null;
-    let ringOsc: OscillatorNode | null = null;
-
-    /** Slider at 0 (or unset) means "use the preset's character" — Deep/High shift by default. */
-    const presetDefaultShift = preset === 'deep' ? -4 : preset === 'high' ? 4 : 0;
-    const pitchShift = profile.pitchShift || presetDefaultShift;
-    const pitchFactor = Math.pow(2, pitchShift / 12);
-
-    let head: AudioNode = this.sourceNode;
-
-    if (preset === 'none') {
-      head.connect(outputGain);
-      outputGain.gain.value = 1.0;
-      this.chain = { workletNode: null, filters, ringOsc: null, outputGain };
-      return;
-    }
-
-    // Pitch shift via worklet (skip if preset doesn't use it or worklet failed)
-    const wantPitch =
-      (preset === 'deep' || preset === 'high' || preset === 'custom') &&
-      Math.abs(pitchFactor - 1.0) > 0.001 &&
-      this.workletReady;
-
-    if (wantPitch && !this.workletFailed) {
-      workletNode = new AudioWorkletNode(ctx, 'withinearshot-pitch-shift', {
-        parameterData: { pitchFactor },
-      });
-      head.connect(workletNode);
-      head = workletNode;
-      filters.push(workletNode);
-    }
-
-    if (preset === 'deep') {
-      const low = ctx.createBiquadFilter();
-      low.type = 'lowshelf';
-      low.frequency.value = 200;
-      low.gain.value = 3;
-
-      const high = ctx.createBiquadFilter();
-      high.type = 'highshelf';
-      high.frequency.value = 6000;
-      high.gain.value = -4;
-
-      head.connect(low);
-      low.connect(high);
-      high.connect(outputGain);
-      filters.push(low, high);
-      outputGain.gain.value = 1.0;
-    } else if (preset === 'high') {
-      const low = ctx.createBiquadFilter();
-      low.type = 'lowshelf';
-      low.frequency.value = 300;
-      low.gain.value = -3;
-
-      const high = ctx.createBiquadFilter();
-      high.type = 'highshelf';
-      high.frequency.value = 3000;
-      high.gain.value = 3;
-
-      head.connect(low);
-      low.connect(high);
-      high.connect(outputGain);
-      filters.push(low, high);
-      outputGain.gain.value = 1.0;
-    } else if (preset === 'robot') {
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = 1000;
-      bp.Q.value = 0.8;
-
-      // Ring modulator: multiply signal by oscillator
-      const ringGain = ctx.createGain();
-      ringGain.gain.value = 0; // oscillator drives this AudioParam
-
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = 60;
-      osc.connect(ringGain.gain);
-      osc.start();
-      ringOsc = osc;
-
-      head.connect(bp);
-      bp.connect(ringGain);
-      ringGain.connect(outputGain);
-      filters.push(bp, ringGain);
-      outputGain.gain.value = 0.8;
-    } else if (preset === 'whisper') {
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 4000;
-
-      const mid = ctx.createBiquadFilter();
-      mid.type = 'peaking';
-      mid.frequency.value = 800;
-      mid.gain.value = -6;
-
-      head.connect(lp);
-      lp.connect(mid);
-      mid.connect(outputGain);
-      filters.push(lp, mid);
-      outputGain.gain.value = 0.35;
-    } else {
-      // custom
-      const low = ctx.createBiquadFilter();
-      low.type = 'lowshelf';
-      low.frequency.value = 200;
-      low.gain.value = profile.eqLowGain ?? 0;
-
-      const high = ctx.createBiquadFilter();
-      high.type = 'highshelf';
-      high.frequency.value = 6000;
-      high.gain.value = profile.eqHighGain ?? 0;
-
-      head.connect(low);
-      low.connect(high);
-      high.connect(outputGain);
-      filters.push(low, high);
-      outputGain.gain.value = 1.0;
-    }
-
-    this.chain = { workletNode, filters, ringOsc, outputGain };
+    this.chain = buildVoiceChain(
+      this.ctx,
+      this.sourceNode,
+      this.destNode,
+      profile,
+      this.workletReady && !this.workletFailed,
+    );
+    // A rebuild (applyProfile) while muted must not unmute: remember the preset's own level.
+    this.chainBaseGain = this.chain.outputGain.gain.value;
+    if (this.outputMuted) this.chain.outputGain.gain.value = 0;
   }
 
   private tearDownChain(): void {
-    if (!this.chain) return;
-    const { workletNode, filters, ringOsc, outputGain } = this.chain;
-    try { ringOsc?.stop(); } catch { /* */ }
-    try { ringOsc?.disconnect(); } catch { /* */ }
-    for (const node of filters) {
-      try { node.disconnect(); } catch { /* */ }
-    }
-    try { workletNode?.disconnect(); } catch { /* */ }
-    try { outputGain.disconnect(); } catch { /* */ }
-    try { this.sourceNode?.disconnect(); } catch { /* */ }
+    teardownVoiceChain(this.chain, this.sourceNode);
     this.chain = null;
   }
 }

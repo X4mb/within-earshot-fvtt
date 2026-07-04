@@ -384,6 +384,139 @@ class PitchShiftProcessor extends AudioWorkletProcessor {
 registerProcessor('withinearshot-pitch-shift', PitchShiftProcessor);
 `;
 
+// src/voiceChain.ts
+function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
+  const preset = profile.preset ?? "none";
+  const outputGain = ctx.createGain();
+  outputGain.connect(sink);
+  const filters = [];
+  let workletNode = null;
+  let ringOsc = null;
+  const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : 0;
+  const pitchShift = profile.pitchShift || presetDefaultShift;
+  const pitchFactor = Math.pow(2, pitchShift / 12);
+  let head = source;
+  if (preset === "none") {
+    head.connect(outputGain);
+    outputGain.gain.value = 1;
+    return { workletNode: null, filters, ringOsc: null, outputGain };
+  }
+  const wantPitch = (preset === "deep" || preset === "high" || preset === "custom") && Math.abs(pitchFactor - 1) > 1e-3 && workletAvailable;
+  if (wantPitch) {
+    workletNode = new AudioWorkletNode(ctx, "withinearshot-pitch-shift", {
+      parameterData: { pitchFactor }
+    });
+    head.connect(workletNode);
+    head = workletNode;
+    filters.push(workletNode);
+  }
+  if (preset === "deep") {
+    const low = ctx.createBiquadFilter();
+    low.type = "lowshelf";
+    low.frequency.value = 200;
+    low.gain.value = 3;
+    const high = ctx.createBiquadFilter();
+    high.type = "highshelf";
+    high.frequency.value = 6e3;
+    high.gain.value = -4;
+    head.connect(low);
+    low.connect(high);
+    high.connect(outputGain);
+    filters.push(low, high);
+    outputGain.gain.value = 1;
+  } else if (preset === "high") {
+    const low = ctx.createBiquadFilter();
+    low.type = "lowshelf";
+    low.frequency.value = 300;
+    low.gain.value = -3;
+    const high = ctx.createBiquadFilter();
+    high.type = "highshelf";
+    high.frequency.value = 3e3;
+    high.gain.value = 3;
+    head.connect(low);
+    low.connect(high);
+    high.connect(outputGain);
+    filters.push(low, high);
+    outputGain.gain.value = 1;
+  } else if (preset === "robot") {
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 1e3;
+    bp.Q.value = 0.8;
+    const ringGain = ctx.createGain();
+    ringGain.gain.value = 0;
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = 60;
+    osc.connect(ringGain.gain);
+    osc.start();
+    ringOsc = osc;
+    head.connect(bp);
+    bp.connect(ringGain);
+    ringGain.connect(outputGain);
+    filters.push(bp, ringGain);
+    outputGain.gain.value = 0.8;
+  } else if (preset === "whisper") {
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 4e3;
+    const mid = ctx.createBiquadFilter();
+    mid.type = "peaking";
+    mid.frequency.value = 800;
+    mid.gain.value = -6;
+    head.connect(lp);
+    lp.connect(mid);
+    mid.connect(outputGain);
+    filters.push(lp, mid);
+    outputGain.gain.value = 0.35;
+  } else {
+    const low = ctx.createBiquadFilter();
+    low.type = "lowshelf";
+    low.frequency.value = 200;
+    low.gain.value = profile.eqLowGain ?? 0;
+    const high = ctx.createBiquadFilter();
+    high.type = "highshelf";
+    high.frequency.value = 6e3;
+    high.gain.value = profile.eqHighGain ?? 0;
+    head.connect(low);
+    low.connect(high);
+    high.connect(outputGain);
+    filters.push(low, high);
+    outputGain.gain.value = 1;
+  }
+  return { workletNode, filters, ringOsc, outputGain };
+}
+function teardownVoiceChain(chain, source) {
+  if (!chain) return;
+  const { workletNode, filters, ringOsc, outputGain } = chain;
+  try {
+    ringOsc?.stop();
+  } catch {
+  }
+  try {
+    ringOsc?.disconnect();
+  } catch {
+  }
+  for (const node of filters) {
+    try {
+      node.disconnect();
+    } catch {
+    }
+  }
+  try {
+    workletNode?.disconnect();
+  } catch {
+  }
+  try {
+    outputGain.disconnect();
+  } catch {
+  }
+  try {
+    source?.disconnect();
+  } catch {
+  }
+}
+
 // src/voiceChangerProcessor.ts
 var VoiceChangerProcessor = class {
   ctx = null;
@@ -396,6 +529,8 @@ var VoiceChangerProcessor = class {
   workletFailed = false;
   pendingProfile = null;
   workletBlobUrl = null;
+  chainBaseGain = 1;
+  outputMuted = false;
   isInitialized() {
     return this.state === "ready";
   }
@@ -405,6 +540,15 @@ var VoiceChangerProcessor = class {
   /** True when the track is this processor's output (lets callers avoid re-processing it). */
   ownsTrack(track) {
     return this.processedStream?.getAudioTracks().includes(track) ?? false;
+  }
+  /**
+   * Hard-mute the processed output at the chain gain. Unlike toggling track.enabled — which
+   * Foundry's voice-activation gating flips on speech and would undo — a zero gain guarantees
+   * peers hear silence, e.g. while the GM tunes a voice in the Assign Voice dialog.
+   */
+  setOutputMuted(muted) {
+    this.outputMuted = muted;
+    if (this.chain) this.chain.outputGain.gain.value = muted ? 0 : this.chainBaseGain;
   }
   async initialize(micStream) {
     if (this.state === "initializing") return;
@@ -498,137 +642,18 @@ var VoiceChangerProcessor = class {
   async buildChain(profile) {
     if (!this.ctx || !this.sourceNode || !this.destNode) return;
     this.tearDownChain();
-    const ctx = this.ctx;
-    const preset = profile.preset ?? "none";
-    const outputGain = ctx.createGain();
-    outputGain.connect(this.destNode);
-    const filters = [];
-    let workletNode = null;
-    let ringOsc = null;
-    const presetDefaultShift = preset === "deep" ? -4 : preset === "high" ? 4 : 0;
-    const pitchShift = profile.pitchShift || presetDefaultShift;
-    const pitchFactor = Math.pow(2, pitchShift / 12);
-    let head = this.sourceNode;
-    if (preset === "none") {
-      head.connect(outputGain);
-      outputGain.gain.value = 1;
-      this.chain = { workletNode: null, filters, ringOsc: null, outputGain };
-      return;
-    }
-    const wantPitch = (preset === "deep" || preset === "high" || preset === "custom") && Math.abs(pitchFactor - 1) > 1e-3 && this.workletReady;
-    if (wantPitch && !this.workletFailed) {
-      workletNode = new AudioWorkletNode(ctx, "withinearshot-pitch-shift", {
-        parameterData: { pitchFactor }
-      });
-      head.connect(workletNode);
-      head = workletNode;
-      filters.push(workletNode);
-    }
-    if (preset === "deep") {
-      const low = ctx.createBiquadFilter();
-      low.type = "lowshelf";
-      low.frequency.value = 200;
-      low.gain.value = 3;
-      const high = ctx.createBiquadFilter();
-      high.type = "highshelf";
-      high.frequency.value = 6e3;
-      high.gain.value = -4;
-      head.connect(low);
-      low.connect(high);
-      high.connect(outputGain);
-      filters.push(low, high);
-      outputGain.gain.value = 1;
-    } else if (preset === "high") {
-      const low = ctx.createBiquadFilter();
-      low.type = "lowshelf";
-      low.frequency.value = 300;
-      low.gain.value = -3;
-      const high = ctx.createBiquadFilter();
-      high.type = "highshelf";
-      high.frequency.value = 3e3;
-      high.gain.value = 3;
-      head.connect(low);
-      low.connect(high);
-      high.connect(outputGain);
-      filters.push(low, high);
-      outputGain.gain.value = 1;
-    } else if (preset === "robot") {
-      const bp = ctx.createBiquadFilter();
-      bp.type = "bandpass";
-      bp.frequency.value = 1e3;
-      bp.Q.value = 0.8;
-      const ringGain = ctx.createGain();
-      ringGain.gain.value = 0;
-      const osc = ctx.createOscillator();
-      osc.type = "sine";
-      osc.frequency.value = 60;
-      osc.connect(ringGain.gain);
-      osc.start();
-      ringOsc = osc;
-      head.connect(bp);
-      bp.connect(ringGain);
-      ringGain.connect(outputGain);
-      filters.push(bp, ringGain);
-      outputGain.gain.value = 0.8;
-    } else if (preset === "whisper") {
-      const lp = ctx.createBiquadFilter();
-      lp.type = "lowpass";
-      lp.frequency.value = 4e3;
-      const mid = ctx.createBiquadFilter();
-      mid.type = "peaking";
-      mid.frequency.value = 800;
-      mid.gain.value = -6;
-      head.connect(lp);
-      lp.connect(mid);
-      mid.connect(outputGain);
-      filters.push(lp, mid);
-      outputGain.gain.value = 0.35;
-    } else {
-      const low = ctx.createBiquadFilter();
-      low.type = "lowshelf";
-      low.frequency.value = 200;
-      low.gain.value = profile.eqLowGain ?? 0;
-      const high = ctx.createBiquadFilter();
-      high.type = "highshelf";
-      high.frequency.value = 6e3;
-      high.gain.value = profile.eqHighGain ?? 0;
-      head.connect(low);
-      low.connect(high);
-      high.connect(outputGain);
-      filters.push(low, high);
-      outputGain.gain.value = 1;
-    }
-    this.chain = { workletNode, filters, ringOsc, outputGain };
+    this.chain = buildVoiceChain(
+      this.ctx,
+      this.sourceNode,
+      this.destNode,
+      profile,
+      this.workletReady && !this.workletFailed
+    );
+    this.chainBaseGain = this.chain.outputGain.gain.value;
+    if (this.outputMuted) this.chain.outputGain.gain.value = 0;
   }
   tearDownChain() {
-    if (!this.chain) return;
-    const { workletNode, filters, ringOsc, outputGain } = this.chain;
-    try {
-      ringOsc?.stop();
-    } catch {
-    }
-    try {
-      ringOsc?.disconnect();
-    } catch {
-    }
-    for (const node of filters) {
-      try {
-        node.disconnect();
-      } catch {
-      }
-    }
-    try {
-      workletNode?.disconnect();
-    } catch {
-    }
-    try {
-      outputGain.disconnect();
-    } catch {
-    }
-    try {
-      this.sourceNode?.disconnect();
-    } catch {
-    }
+    teardownVoiceChain(this.chain, this.sourceNode);
     this.chain = null;
   }
 };
@@ -1105,6 +1130,74 @@ function registerVoiceTokenKeybinding() {
   });
 }
 
+// src/voicePreview.ts
+var VoicePreviewer = class {
+  ctx = null;
+  micStream = null;
+  source = null;
+  chain = null;
+  workletReady = false;
+  starting = false;
+  isActive() {
+    return this.ctx !== null;
+  }
+  async start(profile) {
+    if (this.starting || this.ctx) return;
+    this.starting = true;
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ctx = new AudioContext({ sampleRate: 48e3 });
+      await ctx.resume();
+      try {
+        const blobUrl = URL.createObjectURL(
+          new Blob([PITCH_SHIFT_WORKLET_CODE], { type: "application/javascript" })
+        );
+        try {
+          await ctx.audioWorklet.addModule(blobUrl);
+          this.workletReady = true;
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch {
+        this.workletReady = false;
+      }
+      this.micStream = mic;
+      this.ctx = ctx;
+      this.source = ctx.createMediaStreamSource(mic);
+      this.chain = buildVoiceChain(ctx, this.source, ctx.destination, profile, this.workletReady);
+    } catch (err) {
+      this.stop();
+      throw err;
+    } finally {
+      this.starting = false;
+    }
+  }
+  /** Rebuild the preview chain with new settings; no-op when the preview is not running. */
+  update(profile) {
+    if (!this.ctx || !this.source) return;
+    teardownVoiceChain(this.chain, this.source);
+    this.chain = buildVoiceChain(this.ctx, this.source, this.ctx.destination, profile, this.workletReady);
+  }
+  stop() {
+    teardownVoiceChain(this.chain, this.source);
+    this.chain = null;
+    try {
+      this.source?.disconnect();
+    } catch {
+    }
+    this.source = null;
+    for (const t of this.micStream?.getTracks() ?? []) t.stop();
+    this.micStream = null;
+    try {
+      void this.ctx?.close();
+    } catch {
+    }
+    this.ctx = null;
+    this.workletReady = false;
+  }
+};
+var voicePreviewer = new VoicePreviewer();
+
 // src/voiceAssignDialog.ts
 var PRESETS = [
   { value: "none", label: "None (passthrough)" },
@@ -1114,6 +1207,13 @@ var PRESETS = [
   { value: "whisper", label: "Whisper" },
   { value: "custom", label: "Custom" }
 ];
+function isLiveVoiceActor(actorId) {
+  if (!game.user?.isGM || !voiceChangerProcessor.isInitialized()) return false;
+  const pinnedId = getVoiceTokenIdFromUser(game.user);
+  if (!pinnedId) return false;
+  const pinnedDoc = canvas?.scene?.tokens.get(pinnedId);
+  return pinnedDoc?.actor?.id === actorId;
+}
 function openVoiceAssignDialogForActor(actor) {
   const profile = getVoiceProfileForActor(actor) ?? {};
   const currentPreset = profile.preset ?? "none";
@@ -1125,9 +1225,12 @@ function openVoiceAssignDialogForActor(actor) {
   const presetOptions = PRESETS.map(
     (p) => `<option value="${p.value}"${p.value === currentPreset ? " selected" : ""}>${p.label}</option>`
   ).join("");
+  const canMuteLive = !!game.user?.isGM && voiceChangerProcessor.isInitialized();
+  const muteHint = canMuteLive ? '<p class="notes" style="margin:0 0 6px"><i class="fas fa-volume-mute"></i> Players cannot hear you while this window is open.</p>' : "";
   const content = `
     <form>
       <input type="hidden" name="actorId" value="${actorId}">
+      ${muteHint}
       <div class="form-group">
         <label><b>Voice Preset</b></label>
         <select name="preset" style="width:100%">${presetOptions}</select>
@@ -1147,13 +1250,33 @@ function openVoiceAssignDialogForActor(actor) {
         <input type="range" name="eqHighGain" min="-18" max="18" step="1"
                value="${eqHighGain}" style="width:100%">
       </div>
+      <div class="form-group" style="margin-top:12px">
+        <button type="button" id="wea-preview-btn" style="width:100%">
+          <i class="fas fa-headphones"></i> Preview my voice
+        </button>
+        <p class="notes" style="margin:4px 0 0">
+          Hear yourself with these settings, live as you adjust them. Use headphones \u2014 on
+          speakers the mic picks the playback up again.
+        </p>
+      </div>
     </form>`;
   const D = Dialog;
+  if (canMuteLive) voiceChangerProcessor.setOutputMuted(true);
+  const readProfileFromForm = (form) => {
+    const fd = new FormData(form);
+    return {
+      preset: fd.get("preset") ?? "none",
+      pitchShift: parseFloat(fd.get("pitchShift")) || 0,
+      eqLowGain: parseFloat(fd.get("eqLowGain")) || 0,
+      eqHighGain: parseFloat(fd.get("eqHighGain")) || 0
+    };
+  };
   new D({
     title: `Assign Voice: ${actorName}`,
     content,
     default: "save",
     render: (html) => {
+      const form = html.find("form")[0];
       html.find("input[name=pitchShift]").on("input", function() {
         html.find("#wea-pitch-val").text(this.value);
       });
@@ -1163,6 +1286,47 @@ function openVoiceAssignDialogForActor(actor) {
       html.find("input[name=eqHighGain]").on("input", function() {
         html.find("#wea-high-val").text(this.value);
       });
+      let applyTimer;
+      const applyLive = () => {
+        window.clearTimeout(applyTimer);
+        applyTimer = window.setTimeout(() => {
+          const p = readProfileFromForm(form);
+          if (voicePreviewer.isActive()) voicePreviewer.update(p);
+          if (isLiveVoiceActor(actorId)) {
+            void voiceChangerProcessor.applyProfile(p).catch(() => {
+            });
+          }
+        }, 120);
+      };
+      html.find("select[name=preset], input[type=range]").on("input change", applyLive);
+      const btn = html.find("#wea-preview-btn");
+      const setBtnState = (on) => {
+        btn.html(
+          on ? '<i class="fas fa-stop"></i> Stop preview' : '<i class="fas fa-headphones"></i> Preview my voice'
+        );
+      };
+      btn.on("click", () => {
+        if (voicePreviewer.isActive()) {
+          voicePreviewer.stop();
+          setBtnState(false);
+          return;
+        }
+        voicePreviewer.start(readProfileFromForm(form)).then(() => setBtnState(true)).catch((err) => {
+          ui.notifications?.warn(`Within Earshot: preview failed \u2014 ${String(err)}`);
+        });
+      });
+    },
+    close: () => {
+      voicePreviewer.stop();
+      if (canMuteLive) {
+        voiceChangerProcessor.setOutputMuted(false);
+        if (isLiveVoiceActor(actorId)) {
+          const stored = game.actors?.get(actorId);
+          const saved = stored ? getVoiceProfileForActor(stored) ?? { preset: "none" } : null;
+          if (saved) void voiceChangerProcessor.applyProfile(saved).catch(() => {
+          });
+        }
+      }
     },
     buttons: {
       save: {
@@ -1176,24 +1340,15 @@ function openVoiceAssignDialogForActor(actor) {
           if (!targetActor) return;
           const newProfile = {
             ...getVoiceProfileForActor(targetActor) ?? {},
-            preset: fd.get("preset") ?? "none",
-            pitchShift: parseFloat(fd.get("pitchShift")) || 0,
-            eqLowGain: parseFloat(fd.get("eqLowGain")) || 0,
-            eqHighGain: parseFloat(fd.get("eqHighGain")) || 0
+            ...readProfileFromForm(form)
           };
           await persistVoiceProfileFlag(targetActor, newProfile);
-          if (game.user?.isGM && voiceChangerProcessor.isInitialized()) {
-            const pinnedId = getVoiceTokenIdFromUser(game.user);
-            if (pinnedId) {
-              const pinnedDoc = canvas?.scene?.tokens.get(pinnedId);
-              if (pinnedDoc?.actor?.id === targetActor.id) {
-                void voiceChangerProcessor.applyProfile(newProfile).catch((err) => {
-                  ui.notifications?.warn(
-                    `Within Earshot: could not apply voice \u2014 ${String(err)}`
-                  );
-                });
-              }
-            }
+          if (isLiveVoiceActor(targetActor.id)) {
+            void voiceChangerProcessor.applyProfile(newProfile).catch((err) => {
+              ui.notifications?.warn(
+                `Within Earshot: could not apply voice \u2014 ${String(err)}`
+              );
+            });
           }
         }
       },

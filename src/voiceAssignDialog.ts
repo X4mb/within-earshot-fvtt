@@ -1,6 +1,7 @@
 import { getVoiceProfileForActor } from './voiceProfile.js';
 import { persistVoiceProfileFlag } from './voiceProfileSet.js';
 import { voiceChangerProcessor } from './voiceChangerProcessor.js';
+import { voicePreviewer } from './voicePreview.js';
 import { getVoiceTokenIdFromUser } from './voiceToken.js';
 import type { VoicePreset, VoiceProfile } from './voiceProfile.js';
 
@@ -12,6 +13,15 @@ const PRESETS: { value: VoicePreset; label: string }[] = [
   { value: 'whisper', label: 'Whisper' },
   { value: 'custom',  label: 'Custom' },
 ];
+
+/** True when the GM's live outgoing voice currently uses this actor's profile (pinned token). */
+function isLiveVoiceActor(actorId: string): boolean {
+  if (!game.user?.isGM || !voiceChangerProcessor.isInitialized()) return false;
+  const pinnedId = getVoiceTokenIdFromUser(game.user);
+  if (!pinnedId) return false;
+  const pinnedDoc = canvas?.scene?.tokens.get(pinnedId);
+  return pinnedDoc?.actor?.id === actorId;
+}
 
 export function openVoiceAssignDialogForActor(actor: Actor): void {
   const profile = getVoiceProfileForActor(actor) ?? {};
@@ -28,9 +38,15 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
       `<option value="${p.value}"${p.value === currentPreset ? ' selected' : ''}>${p.label}</option>`,
   ).join('');
 
+  const canMuteLive = !!game.user?.isGM && voiceChangerProcessor.isInitialized();
+  const muteHint = canMuteLive
+    ? '<p class="notes" style="margin:0 0 6px"><i class="fas fa-volume-mute"></i> Players cannot hear you while this window is open.</p>'
+    : '';
+
   const content = `
     <form>
       <input type="hidden" name="actorId" value="${actorId}">
+      ${muteHint}
       <div class="form-group">
         <label><b>Voice Preset</b></label>
         <select name="preset" style="width:100%">${presetOptions}</select>
@@ -50,15 +66,40 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
         <input type="range" name="eqHighGain" min="-18" max="18" step="1"
                value="${eqHighGain}" style="width:100%">
       </div>
+      <div class="form-group" style="margin-top:12px">
+        <button type="button" id="wea-preview-btn" style="width:100%">
+          <i class="fas fa-headphones"></i> Preview my voice
+        </button>
+        <p class="notes" style="margin:4px 0 0">
+          Hear yourself with these settings, live as you adjust them. Use headphones — on
+          speakers the mic picks the playback up again.
+        </p>
+      </div>
     </form>`;
 
   const D = Dialog as unknown as new (data: object, options?: object) => { render(force?: boolean): void };
+
+  // Mute the GM's outgoing chain for the whole lifetime of the dialog: settings are applied to
+  // the live voice as they change, and players must not hear the tuning happen.
+  if (canMuteLive) voiceChangerProcessor.setOutputMuted(true);
+
+  const readProfileFromForm = (form: HTMLFormElement): VoiceProfile => {
+    const fd = new FormData(form);
+    return {
+      preset:     (fd.get('preset')     as VoicePreset) ?? 'none',
+      pitchShift: parseFloat(fd.get('pitchShift') as string) || 0,
+      eqLowGain:  parseFloat(fd.get('eqLowGain')  as string) || 0,
+      eqHighGain: parseFloat(fd.get('eqHighGain') as string) || 0,
+    };
+  };
 
   new D({
     title: `Assign Voice: ${actorName}`,
     content,
     default: 'save',
     render: (html: JQuery) => {
+      const form = html.find('form')[0] as HTMLFormElement;
+
       html.find('input[name=pitchShift]').on('input', function (this: HTMLInputElement) {
         html.find('#wea-pitch-val').text(this.value);
       });
@@ -68,6 +109,57 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
       html.find('input[name=eqHighGain]').on('input', function (this: HTMLInputElement) {
         html.find('#wea-high-val').text(this.value);
       });
+
+      // Live apply: rebuild the headphone preview and — when this actor is the pinned live
+      // voice — the outgoing chain (muted above, so only the GM hears the tuning). Debounced:
+      // range inputs fire continuously while dragging and a chain rebuild per event would glitch.
+      let applyTimer: number | undefined;
+      const applyLive = (): void => {
+        window.clearTimeout(applyTimer);
+        applyTimer = window.setTimeout(() => {
+          const p = readProfileFromForm(form);
+          if (voicePreviewer.isActive()) voicePreviewer.update(p);
+          if (isLiveVoiceActor(actorId)) {
+            void voiceChangerProcessor.applyProfile(p).catch(() => { /* preview keeps running */ });
+          }
+        }, 120);
+      };
+      html.find('select[name=preset], input[type=range]').on('input change', applyLive);
+
+      const btn = html.find('#wea-preview-btn');
+      const setBtnState = (on: boolean): void => {
+        btn.html(
+          on
+            ? '<i class="fas fa-stop"></i> Stop preview'
+            : '<i class="fas fa-headphones"></i> Preview my voice',
+        );
+      };
+      btn.on('click', () => {
+        if (voicePreviewer.isActive()) {
+          voicePreviewer.stop();
+          setBtnState(false);
+          return;
+        }
+        voicePreviewer
+          .start(readProfileFromForm(form))
+          .then(() => setBtnState(true))
+          .catch((err: unknown) => {
+            ui.notifications?.warn(`Within Earshot: preview failed — ${String(err)}`);
+          });
+      });
+    },
+    close: () => {
+      voicePreviewer.stop();
+      if (canMuteLive) {
+        voiceChangerProcessor.setOutputMuted(false);
+        // Re-apply the persisted profile: reverts live tuning on Cancel, and after Save the
+        // persisted profile is already the new one, so this is correct either way.
+        if (isLiveVoiceActor(actorId)) {
+          const stored = game.actors?.get(actorId);
+          const saved = stored ? (getVoiceProfileForActor(stored) ?? { preset: 'none' as VoicePreset }) : null;
+          if (saved) void voiceChangerProcessor.applyProfile(saved).catch(() => { /* */ });
+        }
+      }
     },
     buttons: {
       save: {
@@ -84,26 +176,17 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
           // set via the module API) must survive a save.
           const newProfile: VoiceProfile = {
             ...(getVoiceProfileForActor(targetActor) ?? {}),
-            preset:     (fd.get('preset')     as VoicePreset) ?? 'none',
-            pitchShift: parseFloat(fd.get('pitchShift') as string) || 0,
-            eqLowGain:  parseFloat(fd.get('eqLowGain')  as string) || 0,
-            eqHighGain: parseFloat(fd.get('eqHighGain') as string) || 0,
+            ...readProfileFromForm(form),
           };
 
           await persistVoiceProfileFlag(targetActor, newProfile);
 
-          if (game.user?.isGM && voiceChangerProcessor.isInitialized()) {
-            const pinnedId = getVoiceTokenIdFromUser(game.user);
-            if (pinnedId) {
-              const pinnedDoc = canvas?.scene?.tokens.get(pinnedId);
-              if (pinnedDoc?.actor?.id === targetActor.id) {
-                void voiceChangerProcessor.applyProfile(newProfile).catch((err: unknown) => {
-                  ui.notifications?.warn(
-                    `Within Earshot: could not apply voice — ${String(err)}`,
-                  );
-                });
-              }
-            }
+          if (isLiveVoiceActor(targetActor.id as string)) {
+            void voiceChangerProcessor.applyProfile(newProfile).catch((err: unknown) => {
+              ui.notifications?.warn(
+                `Within Earshot: could not apply voice — ${String(err)}`,
+              );
+            });
           }
         },
       },
