@@ -1613,4 +1613,4 @@ Hooks.once("ready", async () => {
       copyAvSessionLogToClipboard
     };
 });
-//# sourceMappingURL=withinearshot.js.map
+//# sourceMappingURL=withinearshot-0.9.5.9.js.map

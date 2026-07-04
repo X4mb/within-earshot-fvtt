@@ -5,14 +5,16 @@
  * Override destination: set FOUNDRY_MODULE_PATH to the full `withinearshot` folder
  * (e.g. `D:/FoundryVTT/Data/modules/withinearshot`).
  */
-import { cpSync, copyFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { cpSync, copyFileSync, mkdirSync, existsSync, readFileSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Folder must match module.json id (differs on the test branch: withinearshot-test). */
-const moduleId = JSON.parse(readFileSync(join(root, 'module.json'), 'utf8')).id;
+const moduleJson = JSON.parse(readFileSync(join(root, 'module.json'), 'utf8'));
+const moduleId = moduleJson.id;
+const entryFile = moduleJson.esmodules?.[0];
 
 const dest =
   process.env.FOUNDRY_MODULE_PATH?.trim() ||
@@ -29,11 +31,13 @@ if (!dest) {
   process.exit(0);
 }
 
-if (!existsSync(join(root, 'dist', 'withinearshot.js'))) {
-  console.error('[withinearshot] dist/withinearshot.js missing — run esbuild first.');
+if (!entryFile || !existsSync(join(root, entryFile))) {
+  console.error(`[withinearshot] ${entryFile ?? 'esmodules entry'} missing — run the build first.`);
   process.exit(1);
 }
 
+// Bundle filenames are version-stamped; clear the old dist so stale versions don't pile up.
+rmSync(join(dest, 'dist'), { recursive: true, force: true });
 mkdirSync(join(dest, 'dist'), { recursive: true });
 mkdirSync(join(dest, 'lang'), { recursive: true });
 cpSync(join(root, 'dist'), join(dest, 'dist'), { recursive: true });

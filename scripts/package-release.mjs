@@ -1,5 +1,5 @@
 /** Build module.zip: root contains module.json, dist/, lang/, LICENSE (for GitHub Release + manifest download). */
-import { createWriteStream, existsSync } from 'fs';
+import { createWriteStream, existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import archiver from 'archiver';
@@ -7,8 +7,9 @@ import archiver from 'archiver';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outPath = join(root, 'module.zip');
 
-if (!existsSync(join(root, 'dist', 'withinearshot.js'))) {
-  console.error('[withinearshot] dist/withinearshot.js missing — run npm run build first.');
+const entryFile = JSON.parse(readFileSync(join(root, 'module.json'), 'utf8')).esmodules?.[0];
+if (!entryFile || !existsSync(join(root, entryFile))) {
+  console.error(`[withinearshot] ${entryFile ?? 'esmodules entry'} missing — run npm run build first.`);
   process.exit(1);
 }
 
