@@ -7,11 +7,28 @@ export interface VoiceChainNodes {
   outputGain: GainNode;
 }
 
+/** Soft-clip curve for the growl stage; amount 0–100. */
+function makeDistortionCurve(amount: number): Float32Array<ArrayBuffer> {
+  const k = amount * 3; // 0–300: subtle at 10, snarling at 60+
+  const n = 8192;
+  const curve = new Float32Array(new ArrayBuffer(n * 4));
+  const deg = Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
 /**
- * Wire source → (preset processing) → outputGain → sink inside ctx and return the created nodes.
+ * Wire source → (chain) → outputGain → sink inside ctx and return the created nodes.
  * Shared by the live processor (sink = MediaStreamAudioDestinationNode feeding peers) and the
  * dialog preview (sink = ctx.destination, the GM's own speakers) so both hear the same chain.
  * Callers own teardown via teardownVoiceChain. workletAvailable gates the pitch-shift stage.
+ *
+ * Stage order: pitch → preset character (robot ring-mod / whisper filter) → shelf EQ →
+ * growl (waveshaper) → echo (feedback delay). Every slider applies for every preset; the
+ * preset only contributes its special stage and a pitch fallback.
  */
 export function buildVoiceChain(
   ctx: AudioContext,
@@ -23,6 +40,7 @@ export function buildVoiceChain(
   const preset: VoicePreset = profile.preset ?? 'none';
   const outputGain = ctx.createGain();
   outputGain.connect(sink);
+  outputGain.gain.value = 1.0;
 
   const filters: AudioNode[] = [];
   let workletNode: AudioWorkletNode | null = null;
@@ -35,19 +53,8 @@ export function buildVoiceChain(
 
   let head: AudioNode = source;
 
-  if (preset === 'none') {
-    head.connect(outputGain);
-    outputGain.gain.value = 1.0;
-    return { workletNode: null, filters, ringOsc: null, outputGain };
-  }
-
-  // Pitch shift via worklet (skip if preset doesn't use it or worklet failed)
-  const wantPitch =
-    (preset === 'deep' || preset === 'high' || preset === 'custom') &&
-    Math.abs(pitchFactor - 1.0) > 0.001 &&
-    workletAvailable;
-
-  if (wantPitch) {
+  // --- Pitch stage ---
+  if (Math.abs(pitchFactor - 1.0) > 0.001 && workletAvailable) {
     workletNode = new AudioWorkletNode(ctx, 'withinearshot-pitch-shift', {
       parameterData: { pitchFactor },
     });
@@ -56,39 +63,8 @@ export function buildVoiceChain(
     filters.push(workletNode);
   }
 
-  if (preset === 'deep') {
-    const low = ctx.createBiquadFilter();
-    low.type = 'lowshelf';
-    low.frequency.value = 200;
-    low.gain.value = 3;
-
-    const high = ctx.createBiquadFilter();
-    high.type = 'highshelf';
-    high.frequency.value = 6000;
-    high.gain.value = -4;
-
-    head.connect(low);
-    low.connect(high);
-    high.connect(outputGain);
-    filters.push(low, high);
-    outputGain.gain.value = 1.0;
-  } else if (preset === 'high') {
-    const low = ctx.createBiquadFilter();
-    low.type = 'lowshelf';
-    low.frequency.value = 300;
-    low.gain.value = -3;
-
-    const high = ctx.createBiquadFilter();
-    high.type = 'highshelf';
-    high.frequency.value = 3000;
-    high.gain.value = 3;
-
-    head.connect(low);
-    low.connect(high);
-    high.connect(outputGain);
-    filters.push(low, high);
-    outputGain.gain.value = 1.0;
-  } else if (preset === 'robot') {
+  // --- Preset character stage ---
+  if (preset === 'robot') {
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
     bp.frequency.value = 1000;
@@ -107,7 +83,7 @@ export function buildVoiceChain(
 
     head.connect(bp);
     bp.connect(ringGain);
-    ringGain.connect(outputGain);
+    head = ringGain;
     filters.push(bp, ringGain);
     outputGain.gain.value = 0.8;
   } else if (preset === 'whisper') {
@@ -122,26 +98,68 @@ export function buildVoiceChain(
 
     head.connect(lp);
     lp.connect(mid);
-    mid.connect(outputGain);
+    head = mid;
     filters.push(lp, mid);
     outputGain.gain.value = 0.35;
-  } else {
-    // custom
+  }
+
+  // --- Shelf EQ stage (always active; 250 Hz / 3 kHz sit where speech actually lives) ---
+  const eqLow = profile.eqLowGain ?? 0;
+  const eqHigh = profile.eqHighGain ?? 0;
+  if (eqLow !== 0 || eqHigh !== 0) {
     const low = ctx.createBiquadFilter();
     low.type = 'lowshelf';
-    low.frequency.value = 200;
-    low.gain.value = profile.eqLowGain ?? 0;
+    low.frequency.value = 250;
+    low.gain.value = eqLow;
 
     const high = ctx.createBiquadFilter();
     high.type = 'highshelf';
-    high.frequency.value = 6000;
-    high.gain.value = profile.eqHighGain ?? 0;
+    high.frequency.value = 3000;
+    high.gain.value = eqHigh;
 
     head.connect(low);
     low.connect(high);
-    high.connect(outputGain);
+    head = high;
     filters.push(low, high);
-    outputGain.gain.value = 1.0;
+  }
+
+  // --- Growl stage ---
+  const distortion = Math.max(0, Math.min(100, profile.distortion ?? 0));
+  if (distortion > 0) {
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = makeDistortionCurve(distortion);
+    shaper.oversample = '4x';
+    // The curve boosts overall level; pull it back so growl doesn't read as "louder = better".
+    const makeup = ctx.createGain();
+    makeup.gain.value = 1 / (1 + distortion / 40);
+    head.connect(shaper);
+    shaper.connect(makeup);
+    head = makeup;
+    filters.push(shaper, makeup);
+  }
+
+  // --- Echo stage (parallel dry/wet feedback delay) ---
+  const echo = Math.max(0, Math.min(100, profile.echo ?? 0));
+  if (echo > 0) {
+    const dry = ctx.createGain();
+    dry.gain.value = 1.0;
+    const delay = ctx.createDelay(1.0);
+    delay.delayTime.value = 0.22;
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.35;
+    const wet = ctx.createGain();
+    wet.gain.value = (echo / 100) * 0.9;
+
+    head.connect(dry);
+    dry.connect(outputGain);
+    head.connect(delay);
+    delay.connect(feedback);
+    feedback.connect(delay);
+    delay.connect(wet);
+    wet.connect(outputGain);
+    filters.push(dry, delay, feedback, wet);
+  } else {
+    head.connect(outputGain);
   }
 
   return { workletNode, filters, ringOsc, outputGain };

@@ -385,10 +385,22 @@ registerProcessor('withinearshot-pitch-shift', PitchShiftProcessor);
 `;
 
 // src/voiceChain.ts
+function makeDistortionCurve(amount) {
+  const k = amount * 3;
+  const n = 8192;
+  const curve = new Float32Array(new ArrayBuffer(n * 4));
+  const deg = Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const x = i * 2 / n - 1;
+    curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
 function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
   const preset = profile.preset ?? "none";
   const outputGain = ctx.createGain();
   outputGain.connect(sink);
+  outputGain.gain.value = 1;
   const filters = [];
   let workletNode = null;
   let ringOsc = null;
@@ -396,13 +408,7 @@ function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
   const pitchShift = profile.pitchShift || presetDefaultShift;
   const pitchFactor = Math.pow(2, pitchShift / 12);
   let head = source;
-  if (preset === "none") {
-    head.connect(outputGain);
-    outputGain.gain.value = 1;
-    return { workletNode: null, filters, ringOsc: null, outputGain };
-  }
-  const wantPitch = (preset === "deep" || preset === "high" || preset === "custom") && Math.abs(pitchFactor - 1) > 1e-3 && workletAvailable;
-  if (wantPitch) {
+  if (Math.abs(pitchFactor - 1) > 1e-3 && workletAvailable) {
     workletNode = new AudioWorkletNode(ctx, "withinearshot-pitch-shift", {
       parameterData: { pitchFactor }
     });
@@ -410,35 +416,7 @@ function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
     head = workletNode;
     filters.push(workletNode);
   }
-  if (preset === "deep") {
-    const low = ctx.createBiquadFilter();
-    low.type = "lowshelf";
-    low.frequency.value = 200;
-    low.gain.value = 3;
-    const high = ctx.createBiquadFilter();
-    high.type = "highshelf";
-    high.frequency.value = 6e3;
-    high.gain.value = -4;
-    head.connect(low);
-    low.connect(high);
-    high.connect(outputGain);
-    filters.push(low, high);
-    outputGain.gain.value = 1;
-  } else if (preset === "high") {
-    const low = ctx.createBiquadFilter();
-    low.type = "lowshelf";
-    low.frequency.value = 300;
-    low.gain.value = -3;
-    const high = ctx.createBiquadFilter();
-    high.type = "highshelf";
-    high.frequency.value = 3e3;
-    high.gain.value = 3;
-    head.connect(low);
-    low.connect(high);
-    high.connect(outputGain);
-    filters.push(low, high);
-    outputGain.gain.value = 1;
-  } else if (preset === "robot") {
+  if (preset === "robot") {
     const bp = ctx.createBiquadFilter();
     bp.type = "bandpass";
     bp.frequency.value = 1e3;
@@ -453,7 +431,7 @@ function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
     ringOsc = osc;
     head.connect(bp);
     bp.connect(ringGain);
-    ringGain.connect(outputGain);
+    head = ringGain;
     filters.push(bp, ringGain);
     outputGain.gain.value = 0.8;
   } else if (preset === "whisper") {
@@ -466,23 +444,58 @@ function buildVoiceChain(ctx, source, sink, profile, workletAvailable) {
     mid.gain.value = -6;
     head.connect(lp);
     lp.connect(mid);
-    mid.connect(outputGain);
+    head = mid;
     filters.push(lp, mid);
     outputGain.gain.value = 0.35;
-  } else {
+  }
+  const eqLow = profile.eqLowGain ?? 0;
+  const eqHigh = profile.eqHighGain ?? 0;
+  if (eqLow !== 0 || eqHigh !== 0) {
     const low = ctx.createBiquadFilter();
     low.type = "lowshelf";
-    low.frequency.value = 200;
-    low.gain.value = profile.eqLowGain ?? 0;
+    low.frequency.value = 250;
+    low.gain.value = eqLow;
     const high = ctx.createBiquadFilter();
     high.type = "highshelf";
-    high.frequency.value = 6e3;
-    high.gain.value = profile.eqHighGain ?? 0;
+    high.frequency.value = 3e3;
+    high.gain.value = eqHigh;
     head.connect(low);
     low.connect(high);
-    high.connect(outputGain);
+    head = high;
     filters.push(low, high);
-    outputGain.gain.value = 1;
+  }
+  const distortion = Math.max(0, Math.min(100, profile.distortion ?? 0));
+  if (distortion > 0) {
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = makeDistortionCurve(distortion);
+    shaper.oversample = "4x";
+    const makeup = ctx.createGain();
+    makeup.gain.value = 1 / (1 + distortion / 40);
+    head.connect(shaper);
+    shaper.connect(makeup);
+    head = makeup;
+    filters.push(shaper, makeup);
+  }
+  const echo = Math.max(0, Math.min(100, profile.echo ?? 0));
+  if (echo > 0) {
+    const dry = ctx.createGain();
+    dry.gain.value = 1;
+    const delay = ctx.createDelay(1);
+    delay.delayTime.value = 0.22;
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.35;
+    const wet = ctx.createGain();
+    wet.gain.value = echo / 100 * 0.9;
+    head.connect(dry);
+    dry.connect(outputGain);
+    head.connect(delay);
+    delay.connect(feedback);
+    feedback.connect(delay);
+    delay.connect(wet);
+    wet.connect(outputGain);
+    filters.push(dry, delay, feedback, wet);
+  } else {
+    head.connect(outputGain);
   }
   return { workletNode, filters, ringOsc, outputGain };
 }
@@ -1216,6 +1229,15 @@ var PRESETS = [
   { value: "whisper", label: "Whisper" },
   { value: "custom", label: "Custom" }
 ];
+var SLIDER_DEFAULTS = { pitchShift: 0, eqLowGain: 0, eqHighGain: 0, distortion: 0, echo: 0 };
+var PRESET_RECIPES = {
+  none: { ...SLIDER_DEFAULTS },
+  deep: { pitchShift: -4, eqLowGain: 6, eqHighGain: -4, distortion: 0, echo: 0 },
+  high: { pitchShift: 4, eqLowGain: -4, eqHighGain: 4, distortion: 0, echo: 0 },
+  robot: { pitchShift: 0, eqLowGain: 0, eqHighGain: 2, distortion: 15, echo: 0 },
+  whisper: { pitchShift: 0, eqLowGain: 0, eqHighGain: 3, distortion: 0, echo: 0 },
+  custom: null
+};
 function isLiveVoiceActor(actorId) {
   if (!game.user?.isGM || !voiceChangerProcessor.isInitialized()) return false;
   const pinnedId = getVoiceTokenIdFromUser(game.user);
@@ -1229,6 +1251,8 @@ function openVoiceAssignDialogForActor(actor) {
   const pitchShift = profile.pitchShift ?? 0;
   const eqLowGain = profile.eqLowGain ?? 0;
   const eqHighGain = profile.eqHighGain ?? 0;
+  const distortion = profile.distortion ?? 0;
+  const echo = profile.echo ?? 0;
   const actorId = actor.id;
   const actorName = actor.name;
   const presetOptions = PRESETS.map(
@@ -1236,6 +1260,12 @@ function openVoiceAssignDialogForActor(actor) {
   ).join("");
   const canMuteLive = !!game.user?.isGM && voiceChangerProcessor.isInitialized();
   const muteHint = canMuteLive ? '<p class="notes" style="margin:0 0 6px"><i class="fas fa-volume-mute"></i> Players cannot hear you while this window is open.</p>' : "";
+  const slider = (name, label, valId, min, max, step, value) => `
+      <div class="form-group" style="margin-top:8px">
+        <label>${label}: <span id="${valId}">${value}</span></label>
+        <input type="range" name="${name}" min="${min}" max="${max}" step="${step}"
+               value="${value}" style="width:100%">
+      </div>`;
   const content = `
     <form>
       <input type="hidden" name="actorId" value="${actorId}">
@@ -1243,32 +1273,26 @@ function openVoiceAssignDialogForActor(actor) {
       <div class="form-group">
         <label><b>Voice Preset</b></label>
         <select name="preset" style="width:100%">${presetOptions}</select>
+        <p class="notes" style="margin:2px 0 0">Presets load starting values into the sliders \u2014 tweak from there.</p>
       </div>
-      <div class="form-group" style="margin-top:8px">
-        <label>Pitch shift (semitones): <span id="wea-pitch-val">${pitchShift}</span></label>
-        <input type="range" name="pitchShift" min="-12" max="12" step="0.5"
-               value="${pitchShift}" style="width:100%">
-      </div>
-      <div class="form-group" style="margin-top:8px">
-        <label>Low shelf gain (dB): <span id="wea-low-val">${eqLowGain}</span></label>
-        <input type="range" name="eqLowGain" min="-18" max="18" step="1"
-               value="${eqLowGain}" style="width:100%">
-      </div>
-      <div class="form-group" style="margin-top:8px">
-        <label>High shelf gain (dB): <span id="wea-high-val">${eqHighGain}</span></label>
-        <input type="range" name="eqHighGain" min="-18" max="18" step="1"
-               value="${eqHighGain}" style="width:100%">
-      </div>
-      <div class="form-group" style="margin-top:12px">
-        <button type="button" id="wea-preview-btn" style="width:100%">
+      ${slider("pitchShift", "Pitch shift (semitones)", "wea-pitch-val", -12, 12, 0.5, pitchShift)}
+      ${slider("eqLowGain", "Bass (dB)", "wea-low-val", -18, 18, 1, eqLowGain)}
+      ${slider("eqHighGain", "Treble (dB)", "wea-high-val", -18, 18, 1, eqHighGain)}
+      ${slider("distortion", "Growl (distortion)", "wea-growl-val", 0, 100, 5, distortion)}
+      ${slider("echo", "Echo (cave/spirit)", "wea-echo-val", 0, 100, 5, echo)}
+      <div class="form-group" style="margin-top:12px; display:flex; gap:6px">
+        <button type="button" id="wea-preview-btn" style="flex:1">
           <i class="fas fa-headphones"></i> Preview my voice
         </button>
-        <p class="notes" style="margin:4px 0 0">
-          Hear yourself with these settings, live as you adjust them. Always open mic \u2014
-          push-to-talk does not apply here. Use headphones \u2014 on speakers the mic picks the
-          playback up again.
-        </p>
+        <button type="button" id="wea-reset-btn" title="Reset all sliders to 0" style="flex:0 0 auto">
+          <i class="fas fa-undo"></i>
+        </button>
       </div>
+      <p class="notes" style="margin:4px 0 0">
+        Hear yourself with these settings, live as you adjust them. Always open mic \u2014
+        push-to-talk does not apply here. Use headphones \u2014 on speakers the mic picks the
+        playback up again.
+      </p>
     </form>`;
   const D = Dialog;
   if (canMuteLive) voiceChangerProcessor.setOutputMuted(true);
@@ -1278,7 +1302,9 @@ function openVoiceAssignDialogForActor(actor) {
       preset: fd.get("preset") ?? "none",
       pitchShift: parseFloat(fd.get("pitchShift")) || 0,
       eqLowGain: parseFloat(fd.get("eqLowGain")) || 0,
-      eqHighGain: parseFloat(fd.get("eqHighGain")) || 0
+      eqHighGain: parseFloat(fd.get("eqHighGain")) || 0,
+      distortion: parseFloat(fd.get("distortion")) || 0,
+      echo: parseFloat(fd.get("echo")) || 0
     };
   };
   new D({
@@ -1287,15 +1313,22 @@ function openVoiceAssignDialogForActor(actor) {
     default: "save",
     render: (html) => {
       const form = html.find("form")[0];
-      html.find("input[name=pitchShift]").on("input", function() {
-        html.find("#wea-pitch-val").text(this.value);
-      });
-      html.find("input[name=eqLowGain]").on("input", function() {
-        html.find("#wea-low-val").text(this.value);
-      });
-      html.find("input[name=eqHighGain]").on("input", function() {
-        html.find("#wea-high-val").text(this.value);
-      });
+      const VALUE_LABELS = {
+        pitchShift: "#wea-pitch-val",
+        eqLowGain: "#wea-low-val",
+        eqHighGain: "#wea-high-val",
+        distortion: "#wea-growl-val",
+        echo: "#wea-echo-val"
+      };
+      const setSlider = (name, value) => {
+        html.find(`input[name=${name}]`).val(String(value));
+        html.find(VALUE_LABELS[name]).text(String(value));
+      };
+      for (const name of Object.keys(VALUE_LABELS)) {
+        html.find(`input[name=${name}]`).on("input", function() {
+          html.find(VALUE_LABELS[name]).text(this.value);
+        });
+      }
       let applyTimer;
       const applyLive = () => {
         window.clearTimeout(applyTimer);
@@ -1308,7 +1341,22 @@ function openVoiceAssignDialogForActor(actor) {
           }
         }, 120);
       };
-      html.find("select[name=preset], input[type=range]").on("input change", applyLive);
+      html.find("input[type=range]").on("input change", applyLive);
+      html.find("select[name=preset]").on("change", function() {
+        const recipe = PRESET_RECIPES[this.value];
+        if (recipe) {
+          for (const [name, value] of Object.entries(recipe)) {
+            setSlider(name, value);
+          }
+        }
+        applyLive();
+      });
+      html.find("#wea-reset-btn").on("click", () => {
+        for (const [name, value] of Object.entries(SLIDER_DEFAULTS)) {
+          setSlider(name, value);
+        }
+        applyLive();
+      });
       const btn = html.find("#wea-preview-btn");
       const setBtnState = (on) => {
         btn.html(
@@ -1623,4 +1671,4 @@ Hooks.once("ready", async () => {
       copyAvSessionLogToClipboard
     };
 });
-//# sourceMappingURL=withinearshot-0.9.5.10.js.map
+//# sourceMappingURL=withinearshot-0.9.5.11.js.map

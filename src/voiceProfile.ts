@@ -8,6 +8,10 @@ export interface VoiceProfile {
   pitchShift?: number;
   eqLowGain?: number;
   eqHighGain?: number;
+  /** 0–100: waveshaper drive ("growl"). */
+  distortion?: number;
+  /** 0–100: feedback-delay wet mix ("cave/spirit echo"). */
+  echo?: number;
 }
 
 export function getVoiceProfileForActor(actor: Actor | null | undefined): VoiceProfile | null {

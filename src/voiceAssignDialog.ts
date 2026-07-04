@@ -14,6 +14,29 @@ const PRESETS: { value: VoicePreset; label: string }[] = [
   { value: 'custom',  label: 'Custom' },
 ];
 
+type SliderValues = {
+  pitchShift: number;
+  eqLowGain: number;
+  eqHighGain: number;
+  distortion: number;
+  echo: number;
+};
+
+const SLIDER_DEFAULTS: SliderValues = { pitchShift: 0, eqLowGain: 0, eqHighGain: 0, distortion: 0, echo: 0 };
+
+/**
+ * Selecting a preset loads its recipe into the sliders (starting point, then tweak freely).
+ * 'custom' keeps whatever is set; 'none' zeroes everything (true passthrough).
+ */
+const PRESET_RECIPES: Record<VoicePreset, SliderValues | null> = {
+  none:    { ...SLIDER_DEFAULTS },
+  deep:    { pitchShift: -4, eqLowGain: 6,  eqHighGain: -4, distortion: 0,  echo: 0 },
+  high:    { pitchShift: 4,  eqLowGain: -4, eqHighGain: 4,  distortion: 0,  echo: 0 },
+  robot:   { pitchShift: 0,  eqLowGain: 0,  eqHighGain: 2,  distortion: 15, echo: 0 },
+  whisper: { pitchShift: 0,  eqLowGain: 0,  eqHighGain: 3,  distortion: 0,  echo: 0 },
+  custom:  null,
+};
+
 /** True when the GM's live outgoing voice currently uses this actor's profile (pinned token). */
 function isLiveVoiceActor(actorId: string): boolean {
   if (!game.user?.isGM || !voiceChangerProcessor.isInitialized()) return false;
@@ -29,6 +52,8 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
   const pitchShift = profile.pitchShift ?? 0;
   const eqLowGain  = profile.eqLowGain  ?? 0;
   const eqHighGain = profile.eqHighGain ?? 0;
+  const distortion = profile.distortion ?? 0;
+  const echo       = profile.echo       ?? 0;
 
   const actorId   = (actor as Actor & { id: string }).id;
   const actorName = (actor as Actor & { name: string }).name;
@@ -43,6 +68,13 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
     ? '<p class="notes" style="margin:0 0 6px"><i class="fas fa-volume-mute"></i> Players cannot hear you while this window is open.</p>'
     : '';
 
+  const slider = (name: string, label: string, valId: string, min: number, max: number, step: number, value: number): string => `
+      <div class="form-group" style="margin-top:8px">
+        <label>${label}: <span id="${valId}">${value}</span></label>
+        <input type="range" name="${name}" min="${min}" max="${max}" step="${step}"
+               value="${value}" style="width:100%">
+      </div>`;
+
   const content = `
     <form>
       <input type="hidden" name="actorId" value="${actorId}">
@@ -50,32 +82,26 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
       <div class="form-group">
         <label><b>Voice Preset</b></label>
         <select name="preset" style="width:100%">${presetOptions}</select>
+        <p class="notes" style="margin:2px 0 0">Presets load starting values into the sliders — tweak from there.</p>
       </div>
-      <div class="form-group" style="margin-top:8px">
-        <label>Pitch shift (semitones): <span id="wea-pitch-val">${pitchShift}</span></label>
-        <input type="range" name="pitchShift" min="-12" max="12" step="0.5"
-               value="${pitchShift}" style="width:100%">
-      </div>
-      <div class="form-group" style="margin-top:8px">
-        <label>Low shelf gain (dB): <span id="wea-low-val">${eqLowGain}</span></label>
-        <input type="range" name="eqLowGain" min="-18" max="18" step="1"
-               value="${eqLowGain}" style="width:100%">
-      </div>
-      <div class="form-group" style="margin-top:8px">
-        <label>High shelf gain (dB): <span id="wea-high-val">${eqHighGain}</span></label>
-        <input type="range" name="eqHighGain" min="-18" max="18" step="1"
-               value="${eqHighGain}" style="width:100%">
-      </div>
-      <div class="form-group" style="margin-top:12px">
-        <button type="button" id="wea-preview-btn" style="width:100%">
+      ${slider('pitchShift', 'Pitch shift (semitones)', 'wea-pitch-val', -12, 12, 0.5, pitchShift)}
+      ${slider('eqLowGain', 'Bass (dB)', 'wea-low-val', -18, 18, 1, eqLowGain)}
+      ${slider('eqHighGain', 'Treble (dB)', 'wea-high-val', -18, 18, 1, eqHighGain)}
+      ${slider('distortion', 'Growl (distortion)', 'wea-growl-val', 0, 100, 5, distortion)}
+      ${slider('echo', 'Echo (cave/spirit)', 'wea-echo-val', 0, 100, 5, echo)}
+      <div class="form-group" style="margin-top:12px; display:flex; gap:6px">
+        <button type="button" id="wea-preview-btn" style="flex:1">
           <i class="fas fa-headphones"></i> Preview my voice
         </button>
-        <p class="notes" style="margin:4px 0 0">
-          Hear yourself with these settings, live as you adjust them. Always open mic —
-          push-to-talk does not apply here. Use headphones — on speakers the mic picks the
-          playback up again.
-        </p>
+        <button type="button" id="wea-reset-btn" title="Reset all sliders to 0" style="flex:0 0 auto">
+          <i class="fas fa-undo"></i>
+        </button>
       </div>
+      <p class="notes" style="margin:4px 0 0">
+        Hear yourself with these settings, live as you adjust them. Always open mic —
+        push-to-talk does not apply here. Use headphones — on speakers the mic picks the
+        playback up again.
+      </p>
     </form>`;
 
   const D = Dialog as unknown as new (data: object, options?: object) => { render(force?: boolean): void };
@@ -91,6 +117,8 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
       pitchShift: parseFloat(fd.get('pitchShift') as string) || 0,
       eqLowGain:  parseFloat(fd.get('eqLowGain')  as string) || 0,
       eqHighGain: parseFloat(fd.get('eqHighGain') as string) || 0,
+      distortion: parseFloat(fd.get('distortion') as string) || 0,
+      echo:       parseFloat(fd.get('echo')       as string) || 0,
     };
   };
 
@@ -101,15 +129,22 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
     render: (html: JQuery) => {
       const form = html.find('form')[0] as HTMLFormElement;
 
-      html.find('input[name=pitchShift]').on('input', function (this: HTMLInputElement) {
-        html.find('#wea-pitch-val').text(this.value);
-      });
-      html.find('input[name=eqLowGain]').on('input', function (this: HTMLInputElement) {
-        html.find('#wea-low-val').text(this.value);
-      });
-      html.find('input[name=eqHighGain]').on('input', function (this: HTMLInputElement) {
-        html.find('#wea-high-val').text(this.value);
-      });
+      const VALUE_LABELS: Record<keyof SliderValues, string> = {
+        pitchShift: '#wea-pitch-val',
+        eqLowGain:  '#wea-low-val',
+        eqHighGain: '#wea-high-val',
+        distortion: '#wea-growl-val',
+        echo:       '#wea-echo-val',
+      };
+      const setSlider = (name: keyof SliderValues, value: number): void => {
+        html.find(`input[name=${name}]`).val(String(value));
+        html.find(VALUE_LABELS[name]).text(String(value));
+      };
+      for (const name of Object.keys(VALUE_LABELS) as (keyof SliderValues)[]) {
+        html.find(`input[name=${name}]`).on('input', function (this: HTMLInputElement) {
+          html.find(VALUE_LABELS[name]).text(this.value);
+        });
+      }
 
       // Live apply: rebuild the headphone preview and — when this actor is the pinned live
       // voice — the outgoing chain (muted above, so only the GM hears the tuning). Debounced:
@@ -125,7 +160,25 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
           }
         }, 120);
       };
-      html.find('select[name=preset], input[type=range]').on('input change', applyLive);
+      html.find('input[type=range]').on('input change', applyLive);
+
+      // Preset change loads its recipe into the sliders, then applies.
+      html.find('select[name=preset]').on('change', function (this: HTMLSelectElement) {
+        const recipe = PRESET_RECIPES[this.value as VoicePreset];
+        if (recipe) {
+          for (const [name, value] of Object.entries(recipe)) {
+            setSlider(name as keyof SliderValues, value);
+          }
+        }
+        applyLive();
+      });
+
+      html.find('#wea-reset-btn').on('click', () => {
+        for (const [name, value] of Object.entries(SLIDER_DEFAULTS)) {
+          setSlider(name as keyof SliderValues, value);
+        }
+        applyLive();
+      });
 
       const btn = html.find('#wea-preview-btn');
       const setBtnState = (on: boolean): void => {
