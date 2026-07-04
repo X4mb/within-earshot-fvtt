@@ -1145,7 +1145,16 @@ var VoicePreviewer = class {
     if (this.starting || this.ctx) return;
     this.starting = true;
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const constraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      };
+      const audioSrc = game.webrtc?.settings?.get("client", "audioSrc");
+      if (typeof audioSrc === "string" && audioSrc !== "disabled" && audioSrc !== "default") {
+        constraints.deviceId = { ideal: audioSrc };
+      }
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: constraints });
       const ctx = new AudioContext({ sampleRate: 48e3 });
       await ctx.resume();
       try {
@@ -1255,8 +1264,9 @@ function openVoiceAssignDialogForActor(actor) {
           <i class="fas fa-headphones"></i> Preview my voice
         </button>
         <p class="notes" style="margin:4px 0 0">
-          Hear yourself with these settings, live as you adjust them. Use headphones \u2014 on
-          speakers the mic picks the playback up again.
+          Hear yourself with these settings, live as you adjust them. Always open mic \u2014
+          push-to-talk does not apply here. Use headphones \u2014 on speakers the mic picks the
+          playback up again.
         </p>
       </div>
     </form>`;
@@ -1613,4 +1623,4 @@ Hooks.once("ready", async () => {
       copyAvSessionLogToClipboard
     };
 });
-//# sourceMappingURL=withinearshot-0.9.5.9.js.map
+//# sourceMappingURL=withinearshot-0.9.5.10.js.map

@@ -71,8 +71,9 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
           <i class="fas fa-headphones"></i> Preview my voice
         </button>
         <p class="notes" style="margin:4px 0 0">
-          Hear yourself with these settings, live as you adjust them. Use headphones — on
-          speakers the mic picks the playback up again.
+          Hear yourself with these settings, live as you adjust them. Always open mic —
+          push-to-talk does not apply here. Use headphones — on speakers the mic picks the
+          playback up again.
         </p>
       </div>
     </form>`;

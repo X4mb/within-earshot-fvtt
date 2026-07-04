@@ -24,7 +24,22 @@ class VoicePreviewer {
     if (this.starting || this.ctx) return;
     this.starting = true;
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Raw capture: browser noise suppression / AGC clip word onsets and duck quiet speech,
+      // which made the monitor feel choppy next to the live open-mic path. This capture is also
+      // independent of Foundry's push-to-talk / voice-activation gating — the preview is always
+      // open mic. Prefer the input device configured in Foundry's A/V settings.
+      const constraints: MediaTrackConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      };
+      const audioSrc = (game as unknown as {
+        webrtc?: { settings?: { get(scope: string, key: string): unknown } };
+      }).webrtc?.settings?.get('client', 'audioSrc');
+      if (typeof audioSrc === 'string' && audioSrc !== 'disabled' && audioSrc !== 'default') {
+        constraints.deviceId = { ideal: audioSrc };
+      }
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: constraints });
       const ctx = new AudioContext({ sampleRate: 48000 });
       // Started from the preview button click, so a user gesture is active and resume cannot hang.
       await ctx.resume();
