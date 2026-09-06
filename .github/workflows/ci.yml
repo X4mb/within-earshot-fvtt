@@ -1,5 +1,8 @@
-# Validate every push / PR: strict typecheck + a real bundle build.
+# Validate every push / PR: strict typecheck + a real bundle + zip assembly.
 # This is the gate that makes Dependabot bumps safe to merge.
+#
+# Uses npm scripts (not hardcoded script paths) so the same workflow works on
+# both `main` and `test`, whose build scripts differ.
 name: CI
 on:
   push:
@@ -31,11 +34,8 @@ jobs:
       - name: Typecheck (tsc --noEmit, strict)
         run: npm run typecheck
 
-      - name: Build bundle
-        run: node scripts/build.mjs
-
-      - name: Package release zip (verify it assembles)
-        run: node scripts/package-release.mjs
+      - name: Build + package release zip (verify it assembles)
+        run: npm run release-pack
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
