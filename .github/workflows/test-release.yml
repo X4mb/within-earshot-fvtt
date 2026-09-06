@@ -1,0 +1,56 @@
+# Push to `test` -> build and publish an installable PRE-RELEASE.
+#
+# Distribution model:
+#   * A single, reused pre-release tag `test-latest` gives a STABLE download URL
+#     that `module.json` (test branch) points at:
+#       https://github.com/X4mb/within-earshot-fvtt/releases/download/test-latest/module.zip
+#   * The manifest URL stays the raw test-branch module.json, so Foundry's
+#     "Check for Updates" keeps working; the version bump in module.json drives it.
+#   * Serving the zip from Releases (not raw.githubusercontent) avoids the
+#     Cloudflare/raw caching that previously required version-stamped filenames.
+name: Test pre-release
+on:
+  push:
+    branches: [test]
+    paths-ignore:
+      - "README.md"
+      - ".github/dependabot.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: test-release
+  cancel-in-progress: true
+
+jobs:
+  test-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node scripts/build.mjs
+      - run: node scripts/package-release.mjs
+
+      - name: Read module version
+        id: mod
+        run: echo "version=$(node -p "require('./module.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Recreate the pre-release fresh so the asset always reflects the latest test build.
+      - name: Publish test pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete test-latest --yes --cleanup-tag || true
+          gh release create test-latest module.zip \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "Test build ${{ steps.mod.outputs.version }}" \
+            --notes "Automated test build from ${GITHUB_SHA}. Install/update via the test manifest: https://raw.githubusercontent.com/X4mb/within-earshot-fvtt/test/module.json"

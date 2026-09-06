@@ -4,6 +4,9 @@ node_modules/
 .env
 .env.*
 
+# Build output — produced by CI / release, never committed.
+dist/
+
 # Packaged module zips (do not commit)
 *.zip
 
