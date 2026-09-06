@@ -10,9 +10,9 @@ import { toggleVoiceTokenForCurrentUser } from './voiceToken.js';
  */
 export function registerVoiceTokenKeybinding(): void {
   game.keybindings?.register(MODULE_ID, 'toggleVoiceToken', {
-    name: loc(`${MODULE_ID}.SETTINGS.toggleVoiceToken.name`, 'Toggle voice token (selected)'),
+    name: loc('SETTINGS.toggleVoiceToken.name', 'Toggle voice token (selected)'),
     hint: loc(
-      `${MODULE_ID}.SETTINGS.toggleVoiceToken.hint`,
+      'SETTINGS.toggleVoiceToken.hint',
       'While controlling a token, toggle whether your voice is positioned at that token (or clear to default).',
     ),
     editable: [{ key: 'KeyV', modifiers: ['CONTROL', 'SHIFT'] }],
@@ -21,7 +21,7 @@ export function registerVoiceTokenKeybinding(): void {
       const token = canvas.tokens.controlled[0];
       if (!token) {
         ui.notifications?.warn(
-          loc(`${MODULE_ID}.VOICE.needSelection`, 'Select a token first (control it), then press the keybinding.'),
+          loc('VOICE.needSelection', 'Select a token first (control it), then press the keybinding.'),
         );
         return;
       }

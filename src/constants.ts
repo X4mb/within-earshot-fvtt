@@ -4,6 +4,13 @@
  */
 export const MODULE_ID = 'withinearshot-test';
 
+/**
+ * i18n namespace for lang/*.json keys. Deliberately decoupled from MODULE_ID (which differs between
+ * the live and test builds) so the same language file works on both branches, and uppercase per
+ * Foundry convention (e.g. DND5E) to avoid colliding with other packages' top-level keys.
+ */
+export const I18N_NS = 'WITHINEARSHOT';
+
 /** User flag: scene token id this user speaks from for proximity (null = use default primary token). */
 export const FLAG_VOICE_TOKEN_ID = 'voiceTokenId';
 

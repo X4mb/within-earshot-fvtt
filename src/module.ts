@@ -8,6 +8,7 @@ import { ProximitySimplePeerAVClient } from './ProximitySimplePeerAVClient.js';
 import { proximityRouter, scheduleProximityRefresh } from './proximityAudioRouter.js';
 import { clearVoiceTokenFlagForCurrentUser, getVoiceTokenIdFromUser } from './voiceToken.js';
 import {
+  getDebug,
   getGmVoiceGlobal,
   registerModuleKeybindings,
   registerModuleSettings,
@@ -68,8 +69,10 @@ Hooks.once('init', () => {
  */
 const HooksOn = Hooks as unknown as { on(hook: string, fn: (...args: unknown[]) => void): number };
 
-/** Test-build diagnostics: every entry-point hook logs, so a remote install can report what fired. */
-const dlog = (msg: string, ...rest: unknown[]): void => console.log(`[${MODULE_ID}] ${msg}`, ...rest);
+/** Entry-point diagnostics, gated behind the client "Verbose diagnostics" setting (off by default). */
+const dlog = (msg: string, ...rest: unknown[]): void => {
+  if (getDebug()) console.log(`[${MODULE_ID}] ${msg}`, ...rest);
+};
 
 /**
  * v14 canvas-token right-click context menu (get{PlaceableType}PlaceableContextOptions).
@@ -250,8 +253,8 @@ HooksOn.on('getActorContextOptions', (...args: unknown[]) => {
 Hooks.once('i18nInit', registerModuleSettings);
 
 Hooks.once('ready', async () => {
-  // Unmissable build marker for the GM: proves the test module is actually running this version.
-  if (game.user?.isGM) {
+  // Build marker for the GM, only when diagnostics are enabled — proves which version is running.
+  if (game.user?.isGM && getDebug()) {
     const version = (game.modules?.get(MODULE_ID) as { version?: string } | undefined)?.version ?? '?';
     // Permanent (must be dismissed by hand): a 5-second toast during scene load is easy to miss.
     (ui.notifications as unknown as { info(msg: string, opts?: object): unknown })?.info(

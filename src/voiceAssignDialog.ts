@@ -54,6 +54,49 @@ function isLiveVoiceActor(actorId: string): boolean {
   return pinnedDoc?.actor?.id === actorId;
 }
 
+/**
+ * DialogV2 (foundry.applications.api) replaces the removed v1 `Dialog`. It wraps the content in a
+ * form itself, so `content` below has no <form> tag; button callbacks receive `button.form`.
+ * Subclassed only to hook the AppV2 lifecycle: `_onRender` wires the live controls, `_onClose`
+ * runs cleanup for every close path (Save / Cancel / X / Escape).
+ */
+interface DialogV2Instance {
+  element: HTMLElement;
+  render(options?: { force?: boolean }): Promise<unknown>;
+  _onRender(context: unknown, options: unknown): void;
+  _onClose(options: unknown): void;
+}
+const DialogV2Ctor = (
+  foundry as unknown as {
+    applications: { api: { DialogV2: new (config: Record<string, unknown>) => DialogV2Instance } };
+  }
+).applications.api.DialogV2;
+
+class VoiceAssignDialog extends DialogV2Ctor {
+  private readonly onRenderCb: (root: HTMLElement) => void;
+  private readonly onCloseCb: () => void;
+
+  constructor(
+    config: Record<string, unknown>,
+    onRenderCb: (root: HTMLElement) => void,
+    onCloseCb: () => void,
+  ) {
+    super(config);
+    this.onRenderCb = onRenderCb;
+    this.onCloseCb = onCloseCb;
+  }
+
+  override _onRender(context: unknown, options: unknown): void {
+    super._onRender(context, options);
+    this.onRenderCb(this.element);
+  }
+
+  override _onClose(options: unknown): void {
+    this.onCloseCb();
+    super._onClose(options);
+  }
+}
+
 export function openVoiceAssignDialogForActor(actor: Actor): void {
   const profile = getVoiceProfileForActor(actor) ?? {};
   const currentPreset: VoicePreset = profile.preset ?? 'none';
@@ -83,40 +126,37 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
                value="${value}" style="width:100%">
       </div>`;
 
+  // No <form> wrapper: DialogV2 supplies the form. actorId is a Foundry id (safe charset).
   const content = `
-    <form>
-      <input type="hidden" name="actorId" value="${actorId}">
-      ${muteHint}
-      <div class="form-group">
-        <label><b>Voice Preset</b></label>
-        <select name="preset" style="width:100%">${presetOptions}</select>
-        <p class="notes" style="margin:2px 0 0">Presets load starting values into the sliders — tweak from there.</p>
-        <p class="notes" id="wea-preset-note" style="display:none; margin:2px 0 0"><b>Tune the pitch to the speaker:</b>
-          the right shift depends on how low or high the base voice is. A deep voice needs more
-          (up to ±5), a lighter voice less (±2–3). Go in 0.5 steps until it stops sounding
-          artificial, then adjust Bass/Treble.</p>
-      </div>
-      ${slider('pitchShift', 'Pitch shift (semitones)', 'wea-pitch-val', -12, 12, 0.5, pitchShift)}
-      ${slider('eqLowGain', 'Bass (dB)', 'wea-low-val', -18, 18, 1, eqLowGain)}
-      ${slider('eqHighGain', 'Treble (dB)', 'wea-high-val', -18, 18, 1, eqHighGain)}
-      ${slider('distortion', 'Growl (distortion)', 'wea-growl-val', 0, 100, 5, distortion)}
-      ${slider('echo', 'Echo (cave/spirit)', 'wea-echo-val', 0, 100, 5, echo)}
-      <div class="form-group" style="margin-top:12px; display:flex; gap:6px">
-        <button type="button" id="wea-preview-btn" style="flex:1">
-          <i class="fas fa-headphones"></i> Preview my voice
-        </button>
-        <button type="button" id="wea-reset-btn" title="Reset all sliders to 0" style="flex:0 0 auto">
-          <i class="fas fa-undo"></i>
-        </button>
-      </div>
-      <p class="notes" style="margin:4px 0 0">
-        Hear yourself with these settings, live as you adjust them. Always open mic —
-        push-to-talk does not apply here. Use headphones — on speakers the mic picks the
-        playback up again.
-      </p>
-    </form>`;
-
-  const D = Dialog as unknown as new (data: object, options?: object) => { render(force?: boolean): void };
+    <input type="hidden" name="actorId" value="${actorId}">
+    ${muteHint}
+    <div class="form-group">
+      <label><b>Voice Preset</b></label>
+      <select name="preset" style="width:100%">${presetOptions}</select>
+      <p class="notes" style="margin:2px 0 0">Presets load starting values into the sliders — tweak from there.</p>
+      <p class="notes" id="wea-preset-note" style="display:none; margin:2px 0 0"><b>Tune the pitch to the speaker:</b>
+        the right shift depends on how low or high the base voice is. A deep voice needs more
+        (up to ±5), a lighter voice less (±2–3). Go in 0.5 steps until it stops sounding
+        artificial, then adjust Bass/Treble.</p>
+    </div>
+    ${slider('pitchShift', 'Pitch shift (semitones)', 'wea-pitch-val', -12, 12, 0.5, pitchShift)}
+    ${slider('eqLowGain', 'Bass (dB)', 'wea-low-val', -18, 18, 1, eqLowGain)}
+    ${slider('eqHighGain', 'Treble (dB)', 'wea-high-val', -18, 18, 1, eqHighGain)}
+    ${slider('distortion', 'Growl (distortion)', 'wea-growl-val', 0, 100, 5, distortion)}
+    ${slider('echo', 'Echo (cave/spirit)', 'wea-echo-val', 0, 100, 5, echo)}
+    <div class="form-group" style="margin-top:12px; display:flex; gap:6px">
+      <button type="button" id="wea-preview-btn" style="flex:1">
+        <i class="fas fa-headphones"></i> Preview my voice
+      </button>
+      <button type="button" id="wea-reset-btn" title="Reset all sliders to 0" style="flex:0 0 auto">
+        <i class="fas fa-undo"></i>
+      </button>
+    </div>
+    <p class="notes" style="margin:4px 0 0">
+      Hear yourself with these settings, live as you adjust them. Always open mic —
+      push-to-talk does not apply here. Use headphones — on speakers the mic picks the
+      playback up again.
+    </p>`;
 
   // Mute the GM's outgoing chain for the whole lifetime of the dialog: settings are applied to
   // the live voice as they change, and players must not hear the tuning happen.
@@ -134,157 +174,182 @@ export function openVoiceAssignDialogForActor(actor: Actor): void {
     };
   };
 
-  new D({
-    title: `Assign Voice: ${actorName}`,
-    content,
-    default: 'save',
-    render: (html: JQuery) => {
-      const form = html.find('form')[0] as HTMLFormElement;
+  const wire = (root: HTMLElement): void => {
+    // AppV2 may call _onRender more than once; only wire the controls a single time.
+    if (root.dataset.weaWired) return;
+    root.dataset.weaWired = '1';
 
-      const VALUE_LABELS: Record<keyof SliderValues, string> = {
-        pitchShift: '#wea-pitch-val',
-        eqLowGain:  '#wea-low-val',
-        eqHighGain: '#wea-high-val',
-        distortion: '#wea-growl-val',
-        echo:       '#wea-echo-val',
-      };
-      const setSlider = (name: keyof SliderValues, value: number): void => {
-        html.find(`input[name=${name}]`).val(String(value));
-        html.find(VALUE_LABELS[name]).text(String(value));
-      };
-      for (const name of Object.keys(VALUE_LABELS) as (keyof SliderValues)[]) {
-        html.find(`input[name=${name}]`).on('input', function (this: HTMLInputElement) {
-          html.find(VALUE_LABELS[name]).text(this.value);
-        });
-      }
+    const form = root.querySelector('form') as HTMLFormElement | null;
+    if (!form) return;
+    const $ = <T extends HTMLElement>(sel: string): T | null => root.querySelector<T>(sel);
+    const input = (name: string): HTMLInputElement | null =>
+      root.querySelector<HTMLInputElement>(`[name="${name}"]`);
 
-      // Live apply: rebuild the headphone preview and — when this actor is the pinned live
-      // voice — the outgoing chain (muted above, so only the GM hears the tuning). Debounced:
-      // range inputs fire continuously while dragging and a chain rebuild per event would glitch.
-      let applyTimer: number | undefined;
-      const applyLive = (): void => {
-        window.clearTimeout(applyTimer);
-        applyTimer = window.setTimeout(() => {
-          const p = readProfileFromForm(form);
-          if (voicePreviewer.isActive()) voicePreviewer.update(p);
-          if (isLiveVoiceActor(actorId)) {
-            void voiceChangerProcessor.applyProfile(p).catch(() => { /* preview keeps running */ });
-          }
-        }, 120);
-      };
-      html.find('input[type=range]').on('input change', applyLive);
-
-      const updatePresetNote = (preset: VoicePreset): void => {
-        const note = html.find('#wea-preset-note');
-        if (preset === 'feminine' || preset === 'masculine') note.show();
-        else note.hide();
-      };
-      updatePresetNote(currentPreset);
-
-      // Preset change loads its recipe into the sliders, then applies.
-      html.find('select[name=preset]').on('change', function (this: HTMLSelectElement) {
-        const recipe = PRESET_RECIPES[this.value as VoicePreset];
-        if (recipe) {
-          for (const [name, value] of Object.entries(recipe)) {
-            setSlider(name as keyof SliderValues, value);
-          }
-        }
-        updatePresetNote(this.value as VoicePreset);
-        applyLive();
+    const VALUE_LABELS: Record<keyof SliderValues, string> = {
+      pitchShift: '#wea-pitch-val',
+      eqLowGain:  '#wea-low-val',
+      eqHighGain: '#wea-high-val',
+      distortion: '#wea-growl-val',
+      echo:       '#wea-echo-val',
+    };
+    const setSlider = (name: keyof SliderValues, value: number): void => {
+      const el = input(name);
+      if (el) el.value = String(value);
+      const label = $(VALUE_LABELS[name]);
+      if (label) label.textContent = String(value);
+    };
+    for (const name of Object.keys(VALUE_LABELS) as (keyof SliderValues)[]) {
+      input(name)?.addEventListener('input', function (this: HTMLInputElement) {
+        const label = $(VALUE_LABELS[name]);
+        if (label) label.textContent = this.value;
       });
+    }
 
-      html.find('#wea-reset-btn').on('click', () => {
-        for (const [name, value] of Object.entries(SLIDER_DEFAULTS)) {
-          setSlider(name as keyof SliderValues, value);
-        }
-        applyLive();
-      });
-
-      const btn = html.find('#wea-preview-btn');
-      const setBtnState = (on: boolean): void => {
-        btn.html(
-          on
-            ? '<i class="fas fa-stop"></i> Stop preview'
-            : '<i class="fas fa-headphones"></i> Preview my voice',
-        );
-      };
-      const startPreview = (notifyOnFail: boolean): void => {
-        voicePreviewer
-          .start(readProfileFromForm(form))
-          .then(() => setBtnState(true))
-          .catch((err: unknown) => {
-            setBtnState(false);
-            if (notifyOnFail) {
-              ui.notifications?.warn(`Within Earshot: preview failed — ${String(err)}`);
-            }
-          });
-      };
-      btn.on('click', () => {
-        if (voicePreviewer.isActive()) {
-          voicePreviewer.stop();
-          setBtnState(false);
-          return;
-        }
-        startPreview(true);
-      });
-
-      // The whole point of opening this dialog is hearing the result — start monitoring
-      // immediately; the button remains as the off switch.
-      startPreview(false);
-    },
-    close: () => {
-      voicePreviewer.stop();
-      // Recovery net: if something ended the live mic capture (e.g. a device conflict from a
-      // second getUserMedia), re-acquire it — otherwise the GM stays silent to players.
-      const raw = voiceChangerProcessor.getRawInputStream();
-      if (raw && raw.getAudioTracks().length > 0 && raw.getAudioTracks().every((t) => t.readyState === 'ended')) {
-        console.warn('[withinearshot] live mic track dead after dialog close — re-acquiring');
-        const client = game.webrtc?.client as unknown as
-          | { updateLocalStream?: () => Promise<void> }
-          | undefined;
-        void client?.updateLocalStream?.()?.catch?.(() => { /* */ });
-      }
-      if (canMuteLive) {
-        voiceChangerProcessor.setOutputMuted(false);
-        // Re-apply the persisted profile: reverts live tuning on Cancel, and after Save the
-        // persisted profile is already the new one, so this is correct either way.
+    // Live apply: rebuild the headphone preview and — when this actor is the pinned live
+    // voice — the outgoing chain (muted above, so only the GM hears the tuning). Debounced:
+    // range inputs fire continuously while dragging and a chain rebuild per event would glitch.
+    let applyTimer: number | undefined;
+    const applyLive = (): void => {
+      window.clearTimeout(applyTimer);
+      applyTimer = window.setTimeout(() => {
+        const p = readProfileFromForm(form);
+        if (voicePreviewer.isActive()) voicePreviewer.update(p);
         if (isLiveVoiceActor(actorId)) {
-          const stored = game.actors?.get(actorId);
-          const saved = stored ? (getVoiceProfileForActor(stored) ?? { preset: 'none' as VoicePreset }) : null;
-          if (saved) void voiceChangerProcessor.applyProfile(saved).catch(() => { /* */ });
+          void voiceChangerProcessor.applyProfile(p).catch(() => { /* preview keeps running */ });
+        }
+      }, 120);
+    };
+    for (const range of Array.from(root.querySelectorAll<HTMLInputElement>('input[type=range]'))) {
+      range.addEventListener('input', applyLive);
+      range.addEventListener('change', applyLive);
+    }
+
+    const updatePresetNote = (preset: VoicePreset): void => {
+      const note = $('#wea-preset-note');
+      if (note) note.style.display = preset === 'feminine' || preset === 'masculine' ? '' : 'none';
+    };
+    updatePresetNote(currentPreset);
+
+    // Preset change loads its recipe into the sliders, then applies.
+    const presetSel = root.querySelector<HTMLSelectElement>('select[name="preset"]');
+    presetSel?.addEventListener('change', () => {
+      const value = presetSel.value as VoicePreset;
+      const recipe = PRESET_RECIPES[value];
+      if (recipe) {
+        for (const [name, v] of Object.entries(recipe)) {
+          setSlider(name as keyof SliderValues, v);
         }
       }
-    },
-    buttons: {
-      save: {
-        icon: '<i class="fas fa-save"></i>',
-        label: 'Save',
-        callback: async (html: JQuery) => {
-          const form = html.find('form')[0] as HTMLFormElement;
-          const fd = new FormData(form);
-          const targetActorId = fd.get('actorId') as string;
-          const targetActor = targetActorId ? game.actors?.get(targetActorId) : null;
-          if (!targetActor) return;
+      updatePresetNote(value);
+      applyLive();
+    });
 
-          // Spread the stored profile first: fields this dialog doesn't edit (gainMultiplier,
-          // set via the module API) must survive a save.
-          const newProfile: VoiceProfile = {
-            ...(getVoiceProfileForActor(targetActor) ?? {}),
-            ...readProfileFromForm(form),
-          };
+    $('#wea-reset-btn')?.addEventListener('click', () => {
+      for (const [name, value] of Object.entries(SLIDER_DEFAULTS)) {
+        setSlider(name as keyof SliderValues, value);
+      }
+      applyLive();
+    });
 
-          await persistVoiceProfileFlag(targetActor, newProfile);
-
-          if (isLiveVoiceActor(targetActor.id as string)) {
-            void voiceChangerProcessor.applyProfile(newProfile).catch((err: unknown) => {
-              ui.notifications?.warn(
-                `Within Earshot: could not apply voice — ${String(err)}`,
-              );
-            });
+    const btn = $<HTMLButtonElement>('#wea-preview-btn');
+    const setBtnState = (on: boolean): void => {
+      if (btn) {
+        btn.innerHTML = on
+          ? '<i class="fas fa-stop"></i> Stop preview'
+          : '<i class="fas fa-headphones"></i> Preview my voice';
+      }
+    };
+    const startPreview = (notifyOnFail: boolean): void => {
+      voicePreviewer
+        .start(readProfileFromForm(form))
+        .then(() => setBtnState(true))
+        .catch((err: unknown) => {
+          setBtnState(false);
+          if (notifyOnFail) {
+            ui.notifications?.warn(`Within Earshot: preview failed — ${String(err)}`);
           }
+        });
+    };
+    btn?.addEventListener('click', () => {
+      if (voicePreviewer.isActive()) {
+        voicePreviewer.stop();
+        setBtnState(false);
+        return;
+      }
+      startPreview(true);
+    });
+
+    // The whole point of opening this dialog is hearing the result — start monitoring
+    // immediately; the button remains as the off switch.
+    startPreview(false);
+  };
+
+  const onClose = (): void => {
+    voicePreviewer.stop();
+    // Recovery net: if something ended the live mic capture (e.g. a device conflict from a
+    // second getUserMedia), re-acquire it — otherwise the GM stays silent to players.
+    const raw = voiceChangerProcessor.getRawInputStream();
+    if (raw && raw.getAudioTracks().length > 0 && raw.getAudioTracks().every((t) => t.readyState === 'ended')) {
+      console.warn('[withinearshot] live mic track dead after dialog close — re-acquiring');
+      const client = game.webrtc?.client as unknown as
+        | { updateLocalStream?: () => Promise<void> }
+        | undefined;
+      void client?.updateLocalStream?.()?.catch?.(() => { /* */ });
+    }
+    if (canMuteLive) {
+      voiceChangerProcessor.setOutputMuted(false);
+      // Re-apply the persisted profile: reverts live tuning on Cancel, and after Save the
+      // persisted profile is already the new one, so this is correct either way.
+      if (isLiveVoiceActor(actorId)) {
+        const stored = game.actors?.get(actorId);
+        const saved = stored ? (getVoiceProfileForActor(stored) ?? { preset: 'none' as VoicePreset }) : null;
+        if (saved) void voiceChangerProcessor.applyProfile(saved).catch(() => { /* */ });
+      }
+    }
+  };
+
+  const saveProfile = async (form: HTMLFormElement | null): Promise<void> => {
+    if (!form) return;
+    const fd = new FormData(form);
+    const targetActorId = fd.get('actorId') as string;
+    const targetActor = targetActorId ? game.actors?.get(targetActorId) : null;
+    if (!targetActor) return;
+
+    // Spread the stored profile first: fields this dialog doesn't edit (gainMultiplier,
+    // set via the module API) must survive a save.
+    const newProfile: VoiceProfile = {
+      ...(getVoiceProfileForActor(targetActor) ?? {}),
+      ...readProfileFromForm(form),
+    };
+
+    await persistVoiceProfileFlag(targetActor, newProfile);
+
+    if (isLiveVoiceActor(targetActor.id as string)) {
+      void voiceChangerProcessor.applyProfile(newProfile).catch((err: unknown) => {
+        ui.notifications?.warn(`Within Earshot: could not apply voice — ${String(err)}`);
+      });
+    }
+  };
+
+  const dialog = new VoiceAssignDialog(
+    {
+      window: { title: `Assign Voice: ${actorName}` },
+      content,
+      buttons: [
+        {
+          action: 'save',
+          icon: 'fas fa-save',
+          label: 'Save',
+          default: true,
+          callback: async (_event: unknown, button: { form?: HTMLFormElement | null }) => {
+            await saveProfile(button.form ?? null);
+          },
         },
-      },
-      cancel: { label: 'Cancel' },
+        { action: 'cancel', icon: 'fas fa-times', label: 'Cancel' },
+      ],
     },
-  }).render(true);
+    wire,
+    onClose,
+  );
+  void dialog.render({ force: true });
 }

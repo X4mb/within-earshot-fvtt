@@ -80,7 +80,7 @@ export async function toggleVoiceTokenForCurrentUser(token: Token): Promise<void
   const user = game.user;
   if (!user) return;
   if (!canUserPickVoiceToken(user, token)) {
-    ui.notifications?.warn(loc(`${MODULE_ID}.VOICE.cannotPick`, 'You can only set your voice token to a token you own.'));
+    ui.notifications?.warn(loc('VOICE.cannotPick', 'You can only set your voice token to a token you own.'));
     return;
   }
   const current = getVoiceTokenIdFromUser(user);
@@ -108,7 +108,7 @@ export async function toggleVoiceTokenForCurrentUser(token: Token): Promise<void
   const name = token.name ?? token.document.name;
   const msg =
     next === null
-      ? loc(`${MODULE_ID}.VOICE.cleared`, 'Voice position: automatic (assigned character token).')
-      : loc(`${MODULE_ID}.VOICE.set`, 'Voice position: speaking as {name}.').replace('{name}', name);
+      ? loc('VOICE.cleared', 'Voice position: automatic (assigned character token).')
+      : loc('VOICE.set', 'Voice position: speaking as {name}.').replace('{name}', name);
   ui.notifications?.info(msg);
 }

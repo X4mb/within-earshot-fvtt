@@ -2,7 +2,7 @@
 
 > ⚠️ **This is the `test` branch** — a pre-release build (**v0.9.5**) installed as a **separate module** (`withinearshot-test`) so it can coexist with the release version. **Enable only one of the two per world**; settings and assigned voice profiles are stored separately. For the stable release, see the [`main` branch](https://github.com/X4mb/within-earshot-fvtt/tree/main).
 
-> Proximity-based voice for **Foundry Virtual Tabletop**. **Minimum:** v13. **Verified:** core **14.359**. Works with **any game system** and Foundry’s built-in **Simple Peer / WebRTC** voice — no extra voice server required.
+> Proximity-based voice for **Foundry Virtual Tabletop**. **Minimum:** v13. **Verified:** core **14.366**. Works with **any game system** and Foundry’s built-in **Simple Peer / WebRTC** voice — no extra voice server required.
 
 ---
 
@@ -40,7 +40,7 @@ You still use Foundry’s normal **Audio / Video** connection; this module only 
 ## Requirements
 
 - **Foundry v13** or newer (manifest `minimum`)  
-- **Verified** on Foundry **14.359** (manifest `verified`)  
+- **Verified** on Foundry **14.366** (manifest `verified`)  
 - **Built-in A/V** using **Simple Peer** (the default WebRTC mode this module extends)
 
 ---
