@@ -1,0 +1,46 @@
+# Validate every push / PR: strict typecheck + a real bundle + zip assembly.
+# This is the gate that makes Dependabot bumps safe to merge.
+#
+# Uses npm scripts (not hardcoded script paths) so the same workflow works on
+# both `main` and `test`, whose build scripts differ.
+name: CI
+on:
+  push:
+    branches: [main, test]
+  pull_request:
+    branches: [main, test]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit, strict)
+        run: npm run typecheck
+
+      - name: Build + package release zip (verify it assembles)
+        run: npm run release-pack
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip-${{ github.sha }}
+          path: module.zip
+          if-no-files-found: error
+          retention-days: 7
