@@ -277,6 +277,10 @@ Hooks.once('ready', async () => {
     scheduleProximityRefresh();
     scheduleVoiceIndicatorRedraw();
     registerCanvasPositionTicker();
+    // canvasTearDown only detaches the Web Audio graph — WebRTC peers survive a scene change and
+    // need to be re-wired or remote voice stays silently dropped.
+    const client = game.webrtc?.client;
+    if (client instanceof ProximitySimplePeerAVClient) void client.reattachAllPeers();
   });
   H.on('canvasTearDown', () => {
     unregisterCanvasPositionTicker();
@@ -316,7 +320,9 @@ Hooks.once('ready', async () => {
     const doc = args[0] as Actor;
     const change = args[1] as Record<string, unknown>;
     const flags = change.flags as Record<string, Record<string, unknown>> | undefined;
-    if (flags?.[MODULE_ID]?.voiceProfile) {
+    const moduleFlags = flags?.[MODULE_ID];
+    // unsetFlag() diffs as `-=voiceProfile`, not a `voiceProfile` key — catch both set and clear.
+    if (moduleFlags && ('voiceProfile' in moduleFlags || '-=voiceProfile' in moduleFlags)) {
       const uid = game.users?.find((u) => u.character?.id === doc.id)?.id;
       if (uid) {
         proximityRouter.updateProfileGainForUser(uid);

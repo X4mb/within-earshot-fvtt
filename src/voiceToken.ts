@@ -65,10 +65,17 @@ export function getVoiceSourceTokenForDisplay(user: User): Token | null {
   return getSpeakerTokenForUser(user);
 }
 
-/** Clear persisted voice-token pin when the world loads so stale ids cannot mute voice or mis-locate audio. */
+/**
+ * Clear the persisted voice-token pin only when it no longer resolves to any token in the world
+ * (e.g. the token was deleted), so a valid pin survives a reload instead of being wiped every time.
+ */
 export async function clearVoiceTokenFlagForCurrentUser(): Promise<void> {
   const user = game.user as (User & { unsetFlag(ns: string, key: string): Promise<User> }) | undefined;
   if (!user?.unsetFlag) return;
+  const pinId = getVoiceTokenIdFromUser(user);
+  if (!pinId) return;
+  const stillExists = game.scenes?.some((scene) => scene.tokens.get(pinId) !== undefined) ?? false;
+  if (stillExists) return;
   try {
     await user.unsetFlag(MODULE_ID, FLAG_VOICE_TOKEN_ID);
   } catch {

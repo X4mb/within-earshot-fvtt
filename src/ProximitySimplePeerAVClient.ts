@@ -18,6 +18,14 @@ const WIRE_MAX_ATTEMPTS = 30;
 export class ProximitySimplePeerAVClient extends Base {
   /** Pending video elements awaiting Web Audio wiring before being muted. */
   readonly #videoElements = new Map<string, HTMLVideoElement>();
+  /** Bumped whenever a peer's wiring loop should be abandoned (disconnect / re-wire), so a late poll tick from a superseded loop is a no-op. */
+  readonly #wireGeneration = new Map<string, number>();
+
+  #invalidateWireLoop(userId: string): number {
+    const gen = (this.#wireGeneration.get(userId) ?? 0) + 1;
+    this.#wireGeneration.set(userId, gen);
+    return gen;
+  }
 
   /**
    * SimplePeerAVClient has no `getUserMedia` — this is the real mic acquisition point, called by
@@ -57,27 +65,41 @@ export class ProximitySimplePeerAVClient extends Base {
 
   override async initializePeerStream(userId: string): Promise<SimplePeer.Instance> {
     const inst = await super.initializePeerStream(userId);
-    void this.#wirePeerWhenReady(userId);
+    void this.#wirePeerWhenReady(userId, this.#invalidateWireLoop(userId));
     return inst;
   }
 
   override async disconnectPeer(userId: string): Promise<void> {
     this.#videoElements.delete(userId);
+    this.#invalidateWireLoop(userId);
     proximityRouter.detachPeer(userId);
     return super.disconnectPeer(userId);
   }
 
   override async disconnectAll(): Promise<void[]> {
     this.#videoElements.clear();
+    for (const userId of this.#wireGeneration.keys()) this.#invalidateWireLoop(userId);
     proximityRouter.detachAll();
     return super.disconnectAll();
   }
 
   override async disconnect(): Promise<boolean> {
     this.#videoElements.clear();
+    for (const userId of this.#wireGeneration.keys()) this.#invalidateWireLoop(userId);
     proximityRouter.detachAll();
     voiceChangerProcessor.reset();
     return super.disconnect();
+  }
+
+  /**
+   * Re-wire Web Audio for every currently connected peer. The underlying WebRTC connections are
+   * not scene-scoped, so `canvasTearDown` (which detaches the Web Audio graph only) needs this on
+   * the following `canvasReady` or remote audio stays silently dropped until a full page reload.
+   */
+  async reattachAllPeers(): Promise<void> {
+    await Promise.all(
+      this.getConnectedUsers().map((userId) => this.#wirePeerWhenReady(userId, this.#invalidateWireLoop(userId))),
+    );
   }
 
   override async setUserVideo(userId: string, videoElement: HTMLVideoElement): Promise<void> {
@@ -99,7 +121,9 @@ export class ProximitySimplePeerAVClient extends Base {
     scheduleProximityRefresh();
   }
 
-  async #wirePeerWhenReady(userId: string, attempt = 0): Promise<void> {
+  async #wirePeerWhenReady(userId: string, gen: number, attempt = 0): Promise<void> {
+    // A disconnect, reconnect, or reattachAllPeers() superseded this loop — abandon it.
+    if (this.#wireGeneration.get(userId) !== gen) return;
     const stream = this.getMediaStreamForUser(userId);
     if (stream && stream.getAudioTracks().length > 0) {
       proximityRouter.attachPeer(userId, stream);
@@ -120,6 +144,6 @@ export class ProximitySimplePeerAVClient extends Base {
       return;
     }
     await new Promise<void>((resolve) => setTimeout(resolve, WIRE_RETRY_DELAY_MS));
-    return this.#wirePeerWhenReady(userId, attempt + 1);
+    return this.#wirePeerWhenReady(userId, gen, attempt + 1);
   }
 }
